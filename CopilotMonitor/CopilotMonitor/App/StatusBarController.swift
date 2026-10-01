@@ -1711,8 +1711,6 @@ final class StatusBarController: NSObject {
                                 String(format: "%@%.2f", $0.currencySymbol, $0.totalBalance)
                             }.joined(separator: ", ")
                             title = "\(identifier.displayName) (\(balances))"
-                        } else if let symbol = result.details?.balanceCurrencySymbol, !symbol.isEmpty {
-                            title = String(format: "%@ (%@%.2f)", identifier.displayName, symbol, costValue)
                         } else {
                             title = String(format: "%@ ($%.2f)", identifier.displayName, costValue)
                         }

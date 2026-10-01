@@ -42,6 +42,11 @@ struct ProviderBalanceInfo: Equatable {
     var currencySymbol: String {
         DetailedUsage.balanceCurrencySymbol(for: currency)
     }
+
+    /// The single definition of "funded" shared by the status-bar title,
+    /// the main pay-as-you-go row and the provider's legacy primary-balance
+    /// scalars, so those surfaces can never disagree.
+    var isFunded: Bool { totalBalance > 0 }
 }
 
 struct ProviderResult {

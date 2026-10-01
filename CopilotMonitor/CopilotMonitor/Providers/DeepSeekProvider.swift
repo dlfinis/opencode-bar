@@ -17,6 +17,12 @@ final class DeepSeekProvider: ProviderProtocol {
     let identifier: ProviderIdentifier = .deepSeek
     let type: ProviderType = .payAsYouGo
 
+    /// Currencies DeepSeek may bill in, in display order (CNY first). This
+    /// list is the single source of truth for both what parses and how the
+    /// stored balances are ordered, so adding a third currency here is the
+    /// only edit needed.
+    private static let supportedCurrencies = ["CNY", "USD"]
+
     private let tokenManager: TokenManager
     private let session: URLSession
     /// Optional injected API key for tests; falls back to the credential store.
@@ -93,7 +99,7 @@ final class DeepSeekProvider: ProviderProtocol {
                 skippedUnsupported.append("<missing>")
                 return nil
             }
-            guard currency == "CNY" || currency == "USD" else {
+            guard Self.supportedCurrencies.contains(currency) else {
                 skippedUnsupported.append(currency)
                 return nil
             }
@@ -121,9 +127,9 @@ final class DeepSeekProvider: ProviderProtocol {
         }
 
         let orderedBalances = parsedBalances.sorted { lhs, rhs in
-            Self.currencySortOrder(lhs.currency) < Self.currencySortOrder(rhs.currency)
+            Self.currencyDisplayRank(lhs.currency) < Self.currencyDisplayRank(rhs.currency)
         }
-        guard let primaryBalance = orderedBalances.first(where: { $0.totalBalance > 0 })
+        guard let primaryBalance = orderedBalances.first(where: \.isFunded)
                 ?? orderedBalances.first else {
             let currencies = balanceInfos.compactMap { $0.currency }.joined(separator: ", ")
             if !skippedMalformed.isEmpty {
@@ -156,12 +162,11 @@ final class DeepSeekProvider: ProviderProtocol {
         )
     }
 
-    private static func currencySortOrder(_ currency: String) -> Int {
-        switch currency {
-        case "CNY": return 0
-        case "USD": return 1
-        default: return 2
-        }
+    /// Display order derived from `supportedCurrencies` so the list stays the
+    /// single source of truth. Unsupported codes never reach here (filtered by
+    /// the parse guard), so the fallback index is defensive only.
+    private static func currencyDisplayRank(_ currency: String) -> Int {
+        supportedCurrencies.firstIndex(of: currency) ?? supportedCurrencies.count
     }
 
     // MARK: - Private API Methods

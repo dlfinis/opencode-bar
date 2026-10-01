@@ -80,20 +80,16 @@ extension StatusBarController {
 
         switch identifier {
         case .deepSeek:
-            if let balanceInfos, !balanceInfos.isEmpty {
-                for row in Self.deepSeekBalanceRows(balanceInfos: balanceInfos) {
-                    let item = NSMenuItem()
-                    item.view = createDisabledLabelView(
-                        text: "\(row.label) (\(row.currency)): \(row.currencySymbol)\(String(format: "%.2f", row.value))"
-                    )
-                    submenu.addItem(item)
-                }
-            } else {
-                for (label, value) in Self.deepSeekBalanceRows(details: details) {
-                    let item = NSMenuItem()
-                    item.view = createDisabledLabelView(text: String(format: "%@: %@%.2f", label, details.balanceCurrencySymbol, value))
-                    submenu.addItem(item)
-                }
+            // DeepSeekProvider always attaches a non-empty balanceInfos, so the
+            // per-currency rows are the only path. The old single-currency
+            // fallback would only apply to a pre-multi-currency result that
+            // never survives a relaunch.
+            for row in Self.deepSeekBalanceRows(balanceInfos: balanceInfos ?? []) {
+                let item = NSMenuItem()
+                item.view = createDisabledLabelView(
+                    text: "\(row.label) (\(row.currency)): \(row.currencySymbol)\(String(format: "%.2f", row.value))"
+                )
+                submenu.addItem(item)
             }
 
         case .openRouter:
@@ -1065,20 +1061,6 @@ extension StatusBarController {
         return submenu
     }
 
-    /// Label/value pairs for the DeepSeek balance detail rows, in display
-    /// order. Extracted as a pure function so the menu rows are testable
-    /// without instantiating StatusBarController.
-    static func deepSeekBalanceRows(details: DetailedUsage) -> [(label: String, value: Double)] {
-        let rows: [(String, Double?)] = [
-            ("Balance", details.creditsBalance),
-            ("Topped-up", details.balanceToppedUp),
-            ("Granted", details.balanceGranted)
-        ]
-        return rows.compactMap { label, value -> (label: String, value: Double)? in
-            value.map { (label: label, value: $0) }
-        }
-    }
-
     private func resolvedSubscriptionAccountId(details: DetailedUsage, fallback accountId: String?) -> String? {
         if let email = details.email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
            !email.isEmpty {
@@ -1125,7 +1107,7 @@ extension StatusBarController {
     /// falling back to all when everything is zero so the account state is
     /// still visible. Pure/static for testing.
     static func deepSeekMainRowBalances(_ balanceInfos: [ProviderBalanceInfo]) -> [ProviderBalanceInfo] {
-        let funded = balanceInfos.filter { $0.totalBalance > 0 }
+        let funded = balanceInfos.filter(\.isFunded)
         return funded.isEmpty ? balanceInfos : funded
     }
 

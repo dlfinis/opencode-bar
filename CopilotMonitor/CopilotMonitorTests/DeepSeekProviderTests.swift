@@ -252,6 +252,21 @@ final class DeepSeekProviderTests: XCTestCase {
         XCTAssertEqual(result.details?.creditsBalance, 10.0)
     }
 
+    /// An unsupported code next to a usable ledger is skipped quietly while
+    /// the supported currency still renders.
+    func testUnsupportedLedgerNextToSupportedStillRendersSupported() async throws {
+        let mixed = """
+        {"is_available": true, "balance_infos": [
+          {"currency": "EUR", "total_balance": "12.00", "granted_balance": "0.00", "topped_up_balance": "12.00"},
+          {"currency": "CNY", "total_balance": "10.00", "granted_balance": "0.00", "topped_up_balance": "10.00"}
+        ]}
+        """
+        let result = try await makeProvider(body: mixed).fetch()
+        XCTAssertEqual(result.balanceInfos?.map(\.currency), ["CNY"])
+        XCTAssertEqual(result.balanceInfos?.first?.totalBalance, 10.0)
+        XCTAssertEqual(result.details?.creditsBalance, 10.0)
+    }
+
     /// When every supported ledger is malformed the fetch still fails,
     /// instead of silently reporting an empty account.
     func testAllSupportedLedgersMalformedThrowsDecodingError() async throws {
@@ -272,28 +287,6 @@ final class DeepSeekProviderTests: XCTestCase {
     }
 
     // MARK: - Detail menu rows
-
-    /// The DeepSeek detail submenu rows: Balance/Topped-up/Granted in display
-    /// order, formatted with the currency symbol.
-    @MainActor
-    func testDeepSeekBalanceRowsOrderValuesAndCurrency() {
-        let details = DetailedUsage(
-            creditsBalance: 103.49,
-            balanceCurrency: "CNY",
-            balanceGranted: 0.0,
-            balanceToppedUp: 103.49
-        )
-
-        let rows = StatusBarController.deepSeekBalanceRows(details: details)
-        XCTAssertEqual(rows.map(\.label), ["Balance", "Topped-up", "Granted"])
-        XCTAssertEqual(rows[0].value, 103.49)
-        XCTAssertEqual(rows[1].value, 103.49)
-        XCTAssertEqual(rows[2].value, 0.0)
-
-        // The menu renders "label: <symbol><value>".
-        let rendered = rows.map { String(format: "%@: %@%.2f", $0.label, details.balanceCurrencySymbol, $0.value) }
-        XCTAssertEqual(rendered, ["Balance: ¥103.49", "Topped-up: ¥103.49", "Granted: ¥0.00"])
-    }
 
     @MainActor
     func testDeepSeekBalanceRowsKeepBothCurrenciesSeparate() {
