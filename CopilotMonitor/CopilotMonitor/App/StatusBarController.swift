@@ -1346,6 +1346,11 @@ final class StatusBarController: NSObject {
 
         switch result.usage {
         case .payAsYouGo(_, let cost, _):
+            // Balance-style providers keep cost nil; pinned display must show
+            // the funded balance instead of a bogus $0.00.
+            if cost == nil, let balanceInfos = result.balanceInfos, !balanceInfos.isEmpty {
+                return Self.fundedBalanceText(balanceInfos)
+            }
             return formatCostForStatusBar(cost ?? 0.0)
         case .quotaBased:
             let percent = preferredUsedPercentForStatusBar(identifier: candidate.identifier, result: result)
@@ -1369,6 +1374,11 @@ final class StatusBarController: NSObject {
     private func formatProviderForStatusBar(identifier: ProviderIdentifier, result: ProviderResult) -> String {
         switch result.usage {
         case .payAsYouGo(_, let cost, _):
+            if cost == nil, let balanceInfos = result.balanceInfos, !balanceInfos.isEmpty {
+                // Pinned balance-style provider: show the funded balance,
+                // not a bogus $0.00. Same rule as the dropdown row title.
+                return Self.fundedBalanceText(balanceInfos)
+            }
             let costText = formatCostForStatusBar(cost ?? 0)
             return costText
         case .quotaBased:
@@ -1706,11 +1716,7 @@ final class StatusBarController: NSObject {
                             // ¥0.00 ledger should not clutter the title; it stays
                             // in the submenu). Fall back to all if everything is
                             // zero so the account state remains visible.
-                            let shown = Self.deepSeekMainRowBalances(balanceInfos)
-                            let balances = shown.map {
-                                String(format: "%@%.2f", $0.currencySymbol, $0.totalBalance)
-                            }.joined(separator: ", ")
-                            title = "\(identifier.displayName) (\(balances))"
+                            title = "\(identifier.displayName) (\(Self.fundedBalanceText(balanceInfos)))"
                         } else {
                             title = String(format: "%@ ($%.2f)", identifier.displayName, costValue)
                         }

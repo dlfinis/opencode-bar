@@ -1091,6 +1091,16 @@ extension StatusBarController {
         return funded.isEmpty ? balanceInfos : funded
     }
 
+    /// Balance list shared by the pay-as-you-go row title and the pinned
+    /// status-bar text (funded currencies only), e.g. "$26.00" or
+    /// "¥103.49, $26.00". Both surfaces render from this one function so
+    /// they can never disagree.
+    static func fundedBalanceText(_ balanceInfos: [ProviderBalanceInfo]) -> String {
+        deepSeekMainRowBalances(balanceInfos)
+            .map { String(format: "%@%.2f", $0.currencySymbol, $0.totalBalance) }
+            .joined(separator: ", ")
+    }
+
     private func addHorizontalDivider(to submenu: NSMenu) {
         submenu.addItem(NSMenuItem.separator())
     }

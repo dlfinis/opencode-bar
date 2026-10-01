@@ -327,4 +327,21 @@ final class DeepSeekProviderTests: XCTestCase {
         XCTAssertEqual(StatusBarController.deepSeekMainRowBalances(allZero).map(\.currency), ["CNY", "USD"])
     }
 
+    /// The pinned status bar and the dropdown row share one balance string:
+    /// funded currencies only, or all when nothing is funded.
+    @MainActor
+    func testFundedBalanceTextMatchesRowTitleRule() {
+        let funded = [
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0),
+            ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0)
+        ]
+        XCTAssertEqual(StatusBarController.fundedBalanceText(funded), "$26.00")
+
+        let bothFunded = [
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 103.49, grantedBalance: 0.0, toppedUpBalance: 103.49),
+            ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0)
+        ]
+        XCTAssertEqual(StatusBarController.fundedBalanceText(bothFunded), "¥103.49, $26.00")
+    }
+
 }
