@@ -6,10 +6,13 @@ private let logger = Logger(subsystem: "com.opencodeproviders", category: "DeepS
 /// Provider for DeepSeek pay-as-you-go balance tracking.
 ///
 /// DeepSeek is billed as prepaid credit. Its official balance endpoint may
-/// return separate balances in CNY and USD; never merge or discard currencies.
-/// There is no quota window or utilization percentage, so balances are
-/// surfaced as remaining funds while `payAsYouGo.cost` stays nil: cost means
-/// money spent and must not count toward the aggregate spend total.
+/// return separate balances in CNY and USD; currencies are never merged into
+/// one number, and one broken ledger never hides the others (malformed or
+/// unsupported entries are skipped and logged; the fetch fails only when
+/// nothing usable remains). There is no quota window or utilization
+/// percentage, so balances are surfaced as remaining funds while
+/// `payAsYouGo.cost` stays nil: cost means money spent and must not count
+/// toward the aggregate spend total.
 final class DeepSeekProvider: ProviderProtocol {
     let identifier: ProviderIdentifier = .deepSeek
     let type: ProviderType = .payAsYouGo
@@ -78,17 +81,26 @@ final class DeepSeekProvider: ProviderProtocol {
 
         // Preserve every supported currency: balance_infos can contain both
         // CNY and USD, and one currency may be zero while the other is funded.
-        let parsedBalances: [ProviderBalanceInfo] = try balanceInfos.compactMap { info in
+        // One broken ledger must not hide the rest: unsupported codes and
+        // unparseable totals are skipped and logged, and the fetch only
+        // fails when nothing usable is left.
+        var skippedUnsupported: [String] = []
+        var skippedMalformed: [String] = []
+        let parsedBalances: [ProviderBalanceInfo] = balanceInfos.compactMap { info in
             guard let currency = info.currency?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-                .uppercased(),
-                  currency == "CNY" || currency == "USD" else {
+                .uppercased() else {
+                skippedUnsupported.append("<missing>")
+                return nil
+            }
+            guard currency == "CNY" || currency == "USD" else {
+                skippedUnsupported.append(currency)
                 return nil
             }
 
             guard let totalBalance = Double(info.totalBalance ?? ""), totalBalance.isFinite else {
-                logger.error("DeepSeek balance response has unparseable total_balance for \(currency)")
-                throw ProviderError.decodingError("Invalid total_balance for \(currency)")
+                skippedMalformed.append(currency)
+                return nil
             }
 
             let grantedBalance = Double(info.grantedBalance ?? "") ?? 0.0
@@ -101,12 +113,23 @@ final class DeepSeekProvider: ProviderProtocol {
             )
         }
 
+        if !skippedUnsupported.isEmpty {
+            logger.warning("DeepSeek: skipped ledgers with unsupported currency: \(skippedUnsupported.joined(separator: ", "))")
+        }
+        if !skippedMalformed.isEmpty {
+            logger.error("DeepSeek: skipped ledgers with unparseable total_balance: \(skippedMalformed.joined(separator: ", "))")
+        }
+
         let orderedBalances = parsedBalances.sorted { lhs, rhs in
             Self.currencySortOrder(lhs.currency) < Self.currencySortOrder(rhs.currency)
         }
         guard let primaryBalance = orderedBalances.first(where: { $0.totalBalance > 0 })
                 ?? orderedBalances.first else {
             let currencies = balanceInfos.compactMap { $0.currency }.joined(separator: ", ")
+            if !skippedMalformed.isEmpty {
+                logger.error("DeepSeek balance response has no usable ledger (malformed: \(skippedMalformed.joined(separator: ", ")), seen: \(currencies))")
+                throw ProviderError.decodingError("Invalid total_balance")
+            }
             logger.error("DeepSeek balance response has no supported currency (CNY/USD), got: \(currencies)")
             throw ProviderError.decodingError("Unsupported balance currency")
         }

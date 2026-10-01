@@ -1094,10 +1094,10 @@ extension StatusBarController {
     }
 
     static func deepSeekBalanceRows(balanceInfos: [ProviderBalanceInfo]) -> [DeepSeekBalanceDetailRow] {
-        let orderedBalances = balanceInfos.sorted { lhs, rhs in
-            deepSeekCurrencySortOrder(lhs.currency) < deepSeekCurrencySortOrder(rhs.currency)
-        }
-        return orderedBalances.flatMap { balance in
+        // DeepSeekProvider stores balances in display order (CNY before USD),
+        // so the rows follow the stored order as-is. The ordering rule lives
+        // in one place: the provider.
+        return balanceInfos.flatMap { balance in
             [
                 DeepSeekBalanceDetailRow(
                     label: "Balance",
@@ -1127,14 +1127,6 @@ extension StatusBarController {
     static func deepSeekMainRowBalances(_ balanceInfos: [ProviderBalanceInfo]) -> [ProviderBalanceInfo] {
         let funded = balanceInfos.filter { $0.totalBalance > 0 }
         return funded.isEmpty ? balanceInfos : funded
-    }
-
-    private static func deepSeekCurrencySortOrder(_ currency: String) -> Int {
-        switch currency.uppercased() {
-        case "CNY": return 0
-        case "USD": return 1
-        default: return 2
-        }
     }
 
     private func addHorizontalDivider(to submenu: NSMenu) {

@@ -2901,7 +2901,11 @@ final class StatusBarController: NSObject {
                 systemSymbolName: "clock.arrow.circlepath",
                 accessibilityDescription: "Cached Details"
             )
-            cachedItem.submenu = createDetailSubmenu(details, identifier: identifier)
+            cachedItem.submenu = createDetailSubmenu(
+                details,
+                identifier: identifier,
+                balanceInfos: result.balanceInfos
+            )
             submenu.addItem(cachedItem)
         }
 

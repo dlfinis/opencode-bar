@@ -237,6 +237,40 @@ final class DeepSeekProviderTests: XCTestCase {
         }
     }
 
+    /// One broken ledger must not hide a valid one: a malformed total_balance
+    /// is skipped (logged) while the usable currency still renders.
+    func testMalformedLedgerIsSkippedWhenAnotherIsUsable() async throws {
+        let mixed = """
+        {"is_available": true, "balance_infos": [
+          {"currency": "USD", "total_balance": "not-a-number", "granted_balance": "0.00", "topped_up_balance": "26.00"},
+          {"currency": "CNY", "total_balance": "10.00", "granted_balance": "0.00", "topped_up_balance": "10.00"}
+        ]}
+        """
+        let result = try await makeProvider(body: mixed).fetch()
+        XCTAssertEqual(result.balanceInfos?.map(\.currency), ["CNY"])
+        XCTAssertEqual(result.balanceInfos?.first?.totalBalance, 10.0)
+        XCTAssertEqual(result.details?.creditsBalance, 10.0)
+    }
+
+    /// When every supported ledger is malformed the fetch still fails,
+    /// instead of silently reporting an empty account.
+    func testAllSupportedLedgersMalformedThrowsDecodingError() async throws {
+        let broken = """
+        {"is_available": true, "balance_infos": [
+          {"currency": "CNY", "total_balance": "?", "granted_balance": "0.00", "topped_up_balance": "0.00"},
+          {"currency": "USD", "total_balance": "", "granted_balance": "0.00", "topped_up_balance": "0.00"}
+        ]}
+        """
+        do {
+            _ = try await makeProvider(body: broken).fetch()
+            XCTFail("Expected decodingError when no ledger is usable")
+        } catch let error as ProviderError {
+            guard case .decodingError = error else {
+                return XCTFail("Expected decodingError, got \(error)")
+            }
+        }
+    }
+
     // MARK: - Detail menu rows
 
     /// The DeepSeek detail submenu rows: Balance/Topped-up/Granted in display
@@ -263,9 +297,11 @@ final class DeepSeekProviderTests: XCTestCase {
 
     @MainActor
     func testDeepSeekBalanceRowsKeepBothCurrenciesSeparate() {
+        // The provider stores balances in display order (CNY before USD);
+        // the rows keep both currencies separate and follow that order.
         let balances = [
-            ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0),
-            ProviderBalanceInfo(currency: "CNY", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0)
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0),
+            ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0)
         ]
 
         let rows = StatusBarController.deepSeekBalanceRows(balanceInfos: balances)
