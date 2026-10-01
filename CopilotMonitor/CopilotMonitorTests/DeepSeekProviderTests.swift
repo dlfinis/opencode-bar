@@ -289,20 +289,25 @@ final class DeepSeekProviderTests: XCTestCase {
     // MARK: - Detail menu rows
 
     @MainActor
-    func testDeepSeekBalanceRowsKeepBothCurrenciesSeparate() {
+    func testDeepSeekBalanceRowTextsKeepBothCurrenciesSeparate() {
         // The provider stores balances in display order (CNY before USD);
-        // the rows keep both currencies separate and follow that order.
+        // the rows keep both currencies separate, follow that order, and pin
+        // the exact rendered string the submenu shows.
         let balances = [
             ProviderBalanceInfo(currency: "CNY", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0),
             ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0)
         ]
 
-        let rows = StatusBarController.deepSeekBalanceRows(balanceInfos: balances)
+        let rows = StatusBarController.deepSeekBalanceRowTexts(balanceInfos: balances)
 
-        XCTAssertEqual(rows.map(\.label), ["Balance", "Topped-up", "Granted", "Balance", "Topped-up", "Granted"])
-        XCTAssertEqual(rows.map(\.currency), ["CNY", "CNY", "CNY", "USD", "USD", "USD"])
-        XCTAssertEqual(rows.map(\.value), [0.0, 0.0, 0.0, 26.0, 26.0, 0.0])
-        XCTAssertEqual(rows.map(\.currencySymbol), ["¥", "¥", "¥", "$", "$", "$"])
+        XCTAssertEqual(rows, [
+            "Balance (CNY): ¥0.00",
+            "Topped-up (CNY): ¥0.00",
+            "Granted (CNY): ¥0.00",
+            "Balance (USD): $26.00",
+            "Topped-up (USD): $26.00",
+            "Granted (USD): $0.00"
+        ])
     }
 
     /// The main row must drop a zero CNY ledger and keep only the funded USD,

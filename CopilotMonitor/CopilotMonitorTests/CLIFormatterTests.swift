@@ -465,8 +465,11 @@ final class CLIFormatterTests: XCTestCase {
     // MARK: - Balance-style pay-as-you-go formatter tests (DeepSeek)
 
     /// Table metrics must show the remaining balance (CNY) instead of
-    /// "Cost unavailable" when cost is nil and details carry a balance.
+    /// "Cost unavailable" when cost is nil and the ledger is present.
     func testDeepSeekTableShowsRemainingBalance() {
+        let balances = [
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 103.49, grantedBalance: 0.0, toppedUpBalance: 103.49)
+        ]
         let details = DetailedUsage(
             creditsBalance: 103.49,
             balanceCurrency: "CNY",
@@ -474,16 +477,20 @@ final class CLIFormatterTests: XCTestCase {
             balanceToppedUp: 103.49
         )
         let usage = ProviderUsage.payAsYouGo(utilization: 0, cost: nil, resetsAt: nil)
-        let result = ProviderResult(usage: usage, details: details)
+        let result = ProviderResult(usage: usage, details: details, balanceInfos: balances)
 
         let output = TableFormatter.format([.deepSeek: result])
-        XCTAssertTrue(output.contains("¥103.49 remaining"), "Table should show CNY remaining balance, got:\n\(output)")
+        XCTAssertTrue(output.contains("¥103.49 CNY remaining"), "Table should show CNY remaining balance, got:\n\(output)")
         XCTAssertFalse(output.contains("Cost unavailable"), "Balance must not be reported as unavailable:\n\(output)")
     }
 
     /// JSON must emit balance/currency/granted/topped-up for balance-style
-    /// pay-as-you-go providers and omit "cost".
+    /// pay-as-you-go providers, omit "cost", and mirror the ledger in the
+    /// balances array.
     func testDeepSeekJSONIncludesBalanceFields() throws {
+        let balances = [
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 103.49, grantedBalance: 0.0, toppedUpBalance: 103.49)
+        ]
         let details = DetailedUsage(
             creditsBalance: 103.49,
             balanceCurrency: "CNY",
@@ -491,7 +498,7 @@ final class CLIFormatterTests: XCTestCase {
             balanceToppedUp: 103.49
         )
         let usage = ProviderUsage.payAsYouGo(utilization: 0, cost: nil, resetsAt: nil)
-        let result = ProviderResult(usage: usage, details: details)
+        let result = ProviderResult(usage: usage, details: details, balanceInfos: balances)
 
         let json = try JSONFormatter.format([.deepSeek: result])
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: [String: Any]])
@@ -502,6 +509,10 @@ final class CLIFormatterTests: XCTestCase {
         XCTAssertEqual(provider["grantedBalance"] as? Double, 0)
         XCTAssertEqual(try XCTUnwrap(provider["toppedUpBalance"] as? Double), 103.49, accuracy: 0.000_001)
         XCTAssertNil(provider["cost"])
+
+        let formattedBalances = try XCTUnwrap(provider["balances"] as? [[String: Any]])
+        XCTAssertEqual(formattedBalances.map { $0["currency"] as? String }, ["CNY"])
+        XCTAssertEqual(try XCTUnwrap(formattedBalances[0]["balance"] as? Double), 103.49, accuracy: 0.000_001)
     }
 
     func testDeepSeekFormattersPreserveCNYAndUSDBalances() throws {
@@ -531,6 +542,10 @@ final class CLIFormatterTests: XCTestCase {
         let formattedBalances = try XCTUnwrap(provider["balances"] as? [[String: Any]])
         XCTAssertEqual(formattedBalances.map { $0["currency"] as? String }, ["CNY", "USD"])
         XCTAssertEqual(formattedBalances.compactMap { $0["balance"] as? Double }, [0.0, 26.0])
+        XCTAssertEqual(formattedBalances.compactMap { $0["toppedUpBalance"] as? Double }, [0.0, 26.0])
+        // Legacy scalars must come from the funded (primary) ledger, not the zeroed one.
+        XCTAssertEqual(provider["balance"] as? Double, 26.0)
+        XCTAssertEqual(provider["currency"] as? String, "USD")
     }
 
     /// Providers with a real cost keep the existing "$x spent" rendering.

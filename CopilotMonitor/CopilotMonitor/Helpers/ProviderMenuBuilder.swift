@@ -60,13 +60,6 @@ enum ModelUsageGrouper {
     }
 }
 
-struct DeepSeekBalanceDetailRow: Equatable {
-    let label: String
-    let currency: String
-    let currencySymbol: String
-    let value: Double
-}
-
 extension StatusBarController {
 
     func createDetailSubmenu(
@@ -84,11 +77,9 @@ extension StatusBarController {
             // per-currency rows are the only path. The old single-currency
             // fallback would only apply to a pre-multi-currency result that
             // never survives a relaunch.
-            for row in Self.deepSeekBalanceRows(balanceInfos: balanceInfos ?? []) {
+            for text in Self.deepSeekBalanceRowTexts(balanceInfos: balanceInfos ?? []) {
                 let item = NSMenuItem()
-                item.view = createDisabledLabelView(
-                    text: "\(row.label) (\(row.currency)): \(row.currencySymbol)\(String(format: "%.2f", row.value))"
-                )
+                item.view = createDisabledLabelView(text: text)
                 submenu.addItem(item)
             }
 
@@ -1075,31 +1066,20 @@ extension StatusBarController {
         return nil
     }
 
-    static func deepSeekBalanceRows(balanceInfos: [ProviderBalanceInfo]) -> [DeepSeekBalanceDetailRow] {
-        // DeepSeekProvider stores balances in display order (CNY before USD),
-        // so the rows follow the stored order as-is. The ordering rule lives
-        // in one place: the provider.
-        return balanceInfos.flatMap { balance in
+    /// Rendered menu rows for the DeepSeek balance submenu: Balance /
+    /// Topped-up / Granted per currency, e.g. "Balance (CNY): ¥103.49".
+    /// The provider stores balances in display order (CNY before USD), so
+    /// rows follow the stored order; the ordering rule lives in the provider.
+    /// Returns the visible strings so tests pin the exact rendering.
+    static func deepSeekBalanceRowTexts(balanceInfos: [ProviderBalanceInfo]) -> [String] {
+        balanceInfos.flatMap { balance in
             [
-                DeepSeekBalanceDetailRow(
-                    label: "Balance",
-                    currency: balance.currency,
-                    currencySymbol: balance.currencySymbol,
-                    value: balance.totalBalance
-                ),
-                DeepSeekBalanceDetailRow(
-                    label: "Topped-up",
-                    currency: balance.currency,
-                    currencySymbol: balance.currencySymbol,
-                    value: balance.toppedUpBalance
-                ),
-                DeepSeekBalanceDetailRow(
-                    label: "Granted",
-                    currency: balance.currency,
-                    currencySymbol: balance.currencySymbol,
-                    value: balance.grantedBalance
-                )
-            ]
+                ("Balance", balance.totalBalance),
+                ("Topped-up", balance.toppedUpBalance),
+                ("Granted", balance.grantedBalance)
+            ].map { label, value in
+                String(format: "%@ (%@): %@%.2f", label, balance.currency, balance.currencySymbol, value)
+            }
         }
     }
 

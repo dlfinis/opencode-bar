@@ -120,29 +120,32 @@ final class DeepSeekProvider: ProviderProtocol {
         }
 
         if !skippedUnsupported.isEmpty {
-            logger.warning("DeepSeek: skipped ledgers with unsupported currency: \(skippedUnsupported.joined(separator: ", "))")
+            logger.warning("DeepSeek: skipped ledgers with unsupported currency: \(skippedUnsupported.joined(separator: ", "), privacy: .public)")
         }
         if !skippedMalformed.isEmpty {
-            logger.error("DeepSeek: skipped ledgers with unparseable total_balance: \(skippedMalformed.joined(separator: ", "))")
+            logger.error("DeepSeek: skipped ledgers with unparseable total_balance: \(skippedMalformed.joined(separator: ", "), privacy: .public)")
         }
 
-        let orderedBalances = parsedBalances.sorted { lhs, rhs in
-            Self.currencyDisplayRank(lhs.currency) < Self.currencyDisplayRank(rhs.currency)
+        // supportedCurrencies is both the whitelist and the display order,
+        // so the stored list is built by walking it instead of sorting.
+        let orderedBalances = Self.supportedCurrencies.compactMap { code in
+            parsedBalances.first { $0.currency == code }
         }
         guard let primaryBalance = orderedBalances.first(where: \.isFunded)
                 ?? orderedBalances.first else {
+            let supported = Self.supportedCurrencies.joined(separator: "/")
             let currencies = balanceInfos.compactMap { $0.currency }.joined(separator: ", ")
             if !skippedMalformed.isEmpty {
-                logger.error("DeepSeek balance response has no usable ledger (malformed: \(skippedMalformed.joined(separator: ", ")), seen: \(currencies))")
+                logger.error("DeepSeek balance response has no usable ledger (malformed: \(skippedMalformed.joined(separator: ", "), privacy: .public), seen: \(currencies, privacy: .public))")
                 throw ProviderError.decodingError("Invalid total_balance")
             }
-            logger.error("DeepSeek balance response has no supported currency (CNY/USD), got: \(currencies)")
+            logger.error("DeepSeek balance response has no supported currency (\(supported, privacy: .public)), got: \(currencies, privacy: .public)")
             throw ProviderError.decodingError("Unsupported balance currency")
         }
         let balanceSummary = orderedBalances
             .map { "\($0.currency) \(String(format: "%.2f", $0.totalBalance))" }
             .joined(separator: ", ")
-        logger.info("DeepSeek balances fetched: \(balanceSummary, privacy: .public)")
+        logger.info("DeepSeek balances fetched: \(balanceSummary, privacy: .private)")
 
         let details = DetailedUsage(
             creditsBalance: primaryBalance.totalBalance,
@@ -160,13 +163,6 @@ final class DeepSeekProvider: ProviderProtocol {
             details: details,
             balanceInfos: orderedBalances
         )
-    }
-
-    /// Display order derived from `supportedCurrencies` so the list stays the
-    /// single source of truth. Unsupported codes never reach here (filtered by
-    /// the parse guard), so the fallback index is defensive only.
-    private static func currencyDisplayRank(_ currency: String) -> Int {
-        supportedCurrencies.firstIndex(of: currency) ?? supportedCurrencies.count
     }
 
     // MARK: - Private API Methods
