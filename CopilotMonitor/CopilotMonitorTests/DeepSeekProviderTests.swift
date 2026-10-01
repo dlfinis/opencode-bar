@@ -127,6 +127,9 @@ final class DeepSeekProviderTests: XCTestCase {
         XCTAssertEqual(details.balanceCurrencySymbol, "¥")
         XCTAssertEqual(details.balanceGranted, 0.0)
         XCTAssertEqual(details.balanceToppedUp, 103.49)
+        XCTAssertEqual(result.balanceInfos, [
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 103.49, grantedBalance: 0.0, toppedUpBalance: 103.49)
+        ])
     }
 
     func testFetchUnavailableBalanceStillReturnsData() async throws {
@@ -178,26 +181,28 @@ final class DeepSeekProviderTests: XCTestCase {
 
     // MARK: - Multi-currency policy
 
-    /// CNY must win over USD regardless of array order.
-    func testMultiCurrencyPrefersCNYRegardlessOfOrder() async throws {
-        let usdFirst = """
-        {"is_available": true, "balance_infos": [
-          {"currency": "USD", "total_balance": "12.00", "granted_balance": "0.00", "topped_up_balance": "12.00"},
-          {"currency": "CNY", "total_balance": "88.88", "granted_balance": "0.00", "topped_up_balance": "88.88"}
-        ]}
-        """
+    /// Both currencies must be preserved, including a zero CNY balance next to funded USD.
+    func testMultiCurrencyPreservesUSDWhenCNYBalanceIsZero() async throws {
         let cnyFirst = """
         {"is_available": true, "balance_infos": [
-          {"currency": "CNY", "total_balance": "88.88", "granted_balance": "0.00", "topped_up_balance": "88.88"},
-          {"currency": "USD", "total_balance": "12.00", "granted_balance": "0.00", "topped_up_balance": "12.00"}
+          {"currency": "CNY", "total_balance": "0.00", "granted_balance": "0.00", "topped_up_balance": "0.00"},
+          {"currency": "USD", "total_balance": "26.00", "granted_balance": "0.00", "topped_up_balance": "26.00"}
         ]}
         """
-        for body in [usdFirst, cnyFirst] {
+        let usdFirst = """
+        {"is_available": true, "balance_infos": [
+          {"currency": "USD", "total_balance": "26.00", "granted_balance": "0.00", "topped_up_balance": "26.00"},
+          {"currency": "CNY", "total_balance": "0.00", "granted_balance": "0.00", "topped_up_balance": "0.00"}
+        ]}
+        """
+        for body in [cnyFirst, usdFirst] {
             let result = try await makeProvider(body: body).fetch()
             let details = try XCTUnwrap(result.details)
-            XCTAssertEqual(details.balanceCurrency, "CNY", "CNY must win regardless of array order")
-            XCTAssertEqual(details.creditsBalance, 88.88)
-            XCTAssertEqual(details.balanceCurrencySymbol, "¥")
+            XCTAssertEqual(details.balanceCurrency, "USD", "Use a funded currency for legacy single-balance fields")
+            XCTAssertEqual(details.creditsBalance, 26.0)
+            XCTAssertEqual(details.balanceCurrencySymbol, "$")
+            XCTAssertEqual(result.balanceInfos?.map(\.currency), ["CNY", "USD"])
+            XCTAssertEqual(result.balanceInfos?.map(\.totalBalance), [0.0, 26.0])
         }
     }
 
@@ -254,6 +259,38 @@ final class DeepSeekProviderTests: XCTestCase {
         // The menu renders "label: <symbol><value>".
         let rendered = rows.map { String(format: "%@: %@%.2f", $0.label, details.balanceCurrencySymbol, $0.value) }
         XCTAssertEqual(rendered, ["Balance: ¥103.49", "Topped-up: ¥103.49", "Granted: ¥0.00"])
+    }
+
+    @MainActor
+    func testDeepSeekBalanceRowsKeepBothCurrenciesSeparate() {
+        let balances = [
+            ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0),
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0)
+        ]
+
+        let rows = StatusBarController.deepSeekBalanceRows(balanceInfos: balances)
+
+        XCTAssertEqual(rows.map(\.label), ["Balance", "Topped-up", "Granted", "Balance", "Topped-up", "Granted"])
+        XCTAssertEqual(rows.map(\.currency), ["CNY", "CNY", "CNY", "USD", "USD", "USD"])
+        XCTAssertEqual(rows.map(\.value), [0.0, 0.0, 0.0, 26.0, 26.0, 0.0])
+        XCTAssertEqual(rows.map(\.currencySymbol), ["¥", "¥", "¥", "$", "$", "$"])
+    }
+
+    /// The main row must drop a zero CNY ledger and keep only the funded USD,
+    /// but fall back to showing all when every currency is zero.
+    @MainActor
+    func testDeepSeekMainRowShowsOnlyFundedCurrencies() {
+        let funded = [
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0),
+            ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0)
+        ]
+        XCTAssertEqual(StatusBarController.deepSeekMainRowBalances(funded).map(\.currency), ["USD"])
+
+        let allZero = [
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0),
+            ProviderBalanceInfo(currency: "USD", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0)
+        ]
+        XCTAssertEqual(StatusBarController.deepSeekMainRowBalances(allZero).map(\.currency), ["CNY", "USD"])
     }
 
 }

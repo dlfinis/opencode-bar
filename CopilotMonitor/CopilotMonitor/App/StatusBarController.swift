@@ -1701,7 +1701,17 @@ final class StatusBarController: NSObject {
                         // surface the remaining balance through details.
                         let costValue = cost ?? result.details?.creditsBalance ?? 0.0
                         let title: String
-                        if let symbol = result.details?.balanceCurrencySymbol, !symbol.isEmpty {
+                        if let balanceInfos = result.balanceInfos, !balanceInfos.isEmpty {
+                            // Only surface funded currencies in the main row (a
+                            // ¥0.00 ledger should not clutter the title; it stays
+                            // in the submenu). Fall back to all if everything is
+                            // zero so the account state remains visible.
+                            let shown = Self.deepSeekMainRowBalances(balanceInfos)
+                            let balances = shown.map {
+                                String(format: "%@%.2f", $0.currencySymbol, $0.totalBalance)
+                            }.joined(separator: ", ")
+                            title = "\(identifier.displayName) (\(balances))"
+                        } else if let symbol = result.details?.balanceCurrencySymbol, !symbol.isEmpty {
                             title = String(format: "%@ (%@%.2f)", identifier.displayName, symbol, costValue)
                         } else {
                             title = String(format: "%@ ($%.2f)", identifier.displayName, costValue)
@@ -1714,7 +1724,11 @@ final class StatusBarController: NSObject {
                         item.tag = 999
 
                         if let details = result.details, details.hasAnyValue {
-                            item.submenu = createDetailSubmenu(details, identifier: identifier)
+                            item.submenu = createDetailSubmenu(
+                                details,
+                                identifier: identifier,
+                                balanceInfos: result.balanceInfos
+                            )
                         }
 
                        menu.insertItem(item, at: insertIndex)

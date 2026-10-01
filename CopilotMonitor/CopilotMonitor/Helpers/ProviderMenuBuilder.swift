@@ -60,18 +60,40 @@ enum ModelUsageGrouper {
     }
 }
 
+struct DeepSeekBalanceDetailRow: Equatable {
+    let label: String
+    let currency: String
+    let currencySymbol: String
+    let value: Double
+}
+
 extension StatusBarController {
 
-    func createDetailSubmenu(_ details: DetailedUsage, identifier: ProviderIdentifier, accountId: String? = nil) -> NSMenu {
+    func createDetailSubmenu(
+        _ details: DetailedUsage,
+        identifier: ProviderIdentifier,
+        accountId: String? = nil,
+        balanceInfos: [ProviderBalanceInfo]? = nil
+    ) -> NSMenu {
         let submenu = NSMenu()
         let subscriptionAccountId = resolvedSubscriptionAccountId(details: details, fallback: accountId)
 
         switch identifier {
         case .deepSeek:
-            for (label, value) in Self.deepSeekBalanceRows(details: details) {
-                let item = NSMenuItem()
-                item.view = createDisabledLabelView(text: String(format: "%@: %@%.2f", label, details.balanceCurrencySymbol, value))
-                submenu.addItem(item)
+            if let balanceInfos, !balanceInfos.isEmpty {
+                for row in Self.deepSeekBalanceRows(balanceInfos: balanceInfos) {
+                    let item = NSMenuItem()
+                    item.view = createDisabledLabelView(
+                        text: "\(row.label) (\(row.currency)): \(row.currencySymbol)\(String(format: "%.2f", row.value))"
+                    )
+                    submenu.addItem(item)
+                }
+            } else {
+                for (label, value) in Self.deepSeekBalanceRows(details: details) {
+                    let item = NSMenuItem()
+                    item.view = createDisabledLabelView(text: String(format: "%@: %@%.2f", label, details.balanceCurrencySymbol, value))
+                    submenu.addItem(item)
+                }
             }
 
         case .openRouter:
@@ -1069,6 +1091,50 @@ extension StatusBarController {
         }
 
         return nil
+    }
+
+    static func deepSeekBalanceRows(balanceInfos: [ProviderBalanceInfo]) -> [DeepSeekBalanceDetailRow] {
+        let orderedBalances = balanceInfos.sorted { lhs, rhs in
+            deepSeekCurrencySortOrder(lhs.currency) < deepSeekCurrencySortOrder(rhs.currency)
+        }
+        return orderedBalances.flatMap { balance in
+            [
+                DeepSeekBalanceDetailRow(
+                    label: "Balance",
+                    currency: balance.currency,
+                    currencySymbol: balance.currencySymbol,
+                    value: balance.totalBalance
+                ),
+                DeepSeekBalanceDetailRow(
+                    label: "Topped-up",
+                    currency: balance.currency,
+                    currencySymbol: balance.currencySymbol,
+                    value: balance.toppedUpBalance
+                ),
+                DeepSeekBalanceDetailRow(
+                    label: "Granted",
+                    currency: balance.currency,
+                    currencySymbol: balance.currencySymbol,
+                    value: balance.grantedBalance
+                )
+            ]
+        }
+    }
+
+    /// Currencies to show in the main pay-as-you-go row: only funded balances,
+    /// falling back to all when everything is zero so the account state is
+    /// still visible. Pure/static for testing.
+    static func deepSeekMainRowBalances(_ balanceInfos: [ProviderBalanceInfo]) -> [ProviderBalanceInfo] {
+        let funded = balanceInfos.filter { $0.totalBalance > 0 }
+        return funded.isEmpty ? balanceInfos : funded
+    }
+
+    private static func deepSeekCurrencySortOrder(_ currency: String) -> Int {
+        switch currency.uppercased() {
+        case "CNY": return 0
+        case "USD": return 1
+        default: return 2
+        }
     }
 
     private func addHorizontalDivider(to submenu: NSMenu) {
