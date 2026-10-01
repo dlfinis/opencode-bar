@@ -109,8 +109,8 @@ final class DeepSeekProvider: ProviderProtocol {
                 return nil
             }
 
-            let grantedBalance = Double(info.grantedBalance ?? "") ?? 0.0
-            let toppedUpBalance = Double(info.toppedUpBalance ?? "") ?? 0.0
+            let grantedBalance = Double(info.grantedBalance ?? "").flatMap { $0.isFinite ? $0 : nil } ?? 0.0
+            let toppedUpBalance = Double(info.toppedUpBalance ?? "").flatMap { $0.isFinite ? $0 : nil } ?? 0.0
             return ProviderBalanceInfo(
                 currency: currency,
                 totalBalance: totalBalance,

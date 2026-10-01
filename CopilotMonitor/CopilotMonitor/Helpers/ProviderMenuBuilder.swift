@@ -73,14 +73,14 @@ extension StatusBarController {
 
         switch identifier {
         case .deepSeek:
-            // DeepSeekProvider always attaches a non-empty balanceInfos, so the
-            // per-currency rows are the only path. The old single-currency
-            // fallback would only apply to a pre-multi-currency result that
-            // never survives a relaunch.
-            for text in Self.deepSeekBalanceRowTexts(balanceInfos: balanceInfos ?? []) {
-                let item = NSMenuItem()
-                item.view = createDisabledLabelView(text: text)
-                submenu.addItem(item)
+            if let balanceInfos, !balanceInfos.isEmpty {
+                for text in Self.deepSeekBalanceRowTexts(balanceInfos: balanceInfos) {
+                    let item = NSMenuItem()
+                    item.view = createDisabledLabelView(text: text)
+                    submenu.addItem(item)
+                }
+            } else {
+                debugLog("createDetailSubmenu(deepSeek): missing balanceInfos")
             }
 
         case .openRouter:
@@ -1099,6 +1099,18 @@ extension StatusBarController {
         deepSeekMainRowBalances(balanceInfos)
             .map { String(format: "%@%.2f", $0.currencySymbol, $0.totalBalance) }
             .joined(separator: ", ")
+    }
+
+    /// Balance text for nil-cost pay-as-you-go results. Shared by the menu
+    /// row title and pinned status-bar display.
+    static func balanceStatusText(for result: ProviderResult) -> String? {
+        guard case .payAsYouGo(_, let cost, _) = result.usage,
+              cost == nil,
+              let balanceInfos = result.balanceInfos,
+              !balanceInfos.isEmpty else {
+            return nil
+        }
+        return fundedBalanceText(balanceInfos)
     }
 
     private func addHorizontalDivider(to submenu: NSMenu) {

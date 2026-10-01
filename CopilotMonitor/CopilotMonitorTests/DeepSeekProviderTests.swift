@@ -252,6 +252,20 @@ final class DeepSeekProviderTests: XCTestCase {
         XCTAssertEqual(result.details?.creditsBalance, 10.0)
     }
 
+    /// Non-finite secondary amounts must not reach menu or JSON formatting.
+    func testNonFiniteSecondaryBalancesFallBackToZero() async throws {
+        let body = """
+        {"is_available": true, "balance_infos": [
+          {"currency": "USD", "total_balance": "26.00", "granted_balance": "NaN", "topped_up_balance": "Infinity"}
+        ]}
+        """
+        let result = try await makeProvider(body: body).fetch()
+        let balance = try XCTUnwrap(result.balanceInfos?.first)
+        XCTAssertEqual(balance.totalBalance, 26.0)
+        XCTAssertEqual(balance.grantedBalance, 0.0)
+        XCTAssertEqual(balance.toppedUpBalance, 0.0)
+    }
+
     /// An unsupported code next to a usable ledger is skipped quietly while
     /// the supported currency still renders.
     func testUnsupportedLedgerNextToSupportedStillRendersSupported() async throws {
@@ -342,6 +356,20 @@ final class DeepSeekProviderTests: XCTestCase {
             ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0)
         ]
         XCTAssertEqual(StatusBarController.fundedBalanceText(bothFunded), "¥103.49, $26.00")
+
+        let balanceResult = ProviderResult(
+            usage: .payAsYouGo(utilization: 0, cost: nil, resetsAt: nil),
+            details: nil,
+            balanceInfos: funded
+        )
+        XCTAssertEqual(StatusBarController.balanceStatusText(for: balanceResult), "$26.00")
+
+        let costResult = ProviderResult(
+            usage: .payAsYouGo(utilization: 0, cost: 5.0, resetsAt: nil),
+            details: nil,
+            balanceInfos: funded
+        )
+        XCTAssertNil(StatusBarController.balanceStatusText(for: costResult))
     }
 
 }
