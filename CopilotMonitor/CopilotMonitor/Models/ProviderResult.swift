@@ -33,19 +33,33 @@ enum StatusBarQuotaVisibilityPolicy {
     }
 }
 
+struct ProviderBalanceInfo: Equatable {
+    let currency: String
+    let totalBalance: Double
+    let grantedBalance: Double
+    let toppedUpBalance: Double
+
+    var currencySymbol: String {
+        DetailedUsage.balanceCurrencySymbol(for: currency)
+    }
+}
+
 struct ProviderResult {
     let usage: ProviderUsage
     let details: DetailedUsage?
     let accounts: [ProviderAccountResult]?
+    let balanceInfos: [ProviderBalanceInfo]?
 
     init(
         usage: ProviderUsage,
         details: DetailedUsage?,
-        accounts: [ProviderAccountResult]? = nil
+        accounts: [ProviderAccountResult]? = nil,
+        balanceInfos: [ProviderBalanceInfo]? = nil
     ) {
         self.usage = usage
         self.details = details
         self.accounts = accounts
+        self.balanceInfos = balanceInfos
     }
 }
 
@@ -157,7 +171,8 @@ struct DetailedUsage {
     let creditsBalance: Double?
     let planType: String?
 
-    // DeepSeek balance details (pay-as-you-go CNY balance)
+    // Primary DeepSeek balance for legacy scalar formatters. The full
+    // multi-currency response is retained on ProviderResult.balanceInfos.
     let balanceCurrency: String?
     let balanceGranted: Double?
     let balanceToppedUp: Double?
@@ -165,7 +180,11 @@ struct DetailedUsage {
     /// Currency symbol for `balanceCurrency` (e.g. "USD" -> "$", "CNY" -> "¥").
     /// Falls back to the raw code with a trailing space for unknown currencies.
     var balanceCurrencySymbol: String {
-        switch balanceCurrency?.uppercased() {
+        Self.balanceCurrencySymbol(for: balanceCurrency)
+    }
+
+    static func balanceCurrencySymbol(for currency: String?) -> String {
+        switch currency?.uppercased() {
         case "USD", "US": return "$"
         case "CNY", "RMB": return "¥"
         case let code? where !code.isEmpty: return code + " "
@@ -692,6 +711,16 @@ struct JSONFormatter {
                         providerDict["toppedUpBalance"] = toppedUp
                     }
                 }
+                if cost == nil, let balanceInfos = result.balanceInfos, !balanceInfos.isEmpty {
+                    providerDict["balances"] = balanceInfos.map { balance in
+                        [
+                            "currency": balance.currency,
+                            "balance": balance.totalBalance,
+                            "grantedBalance": balance.grantedBalance,
+                            "toppedUpBalance": balance.toppedUpBalance
+                        ] as [String: Any]
+                    }
+                }
 
             case .quotaBased(let remaining, let entitlement, let overagePermitted):
                 providerDict["type"] = "quota-based"
@@ -1159,6 +1188,10 @@ struct TableFormatter {
 
             if let cost = cost {
                 metrics += String(format: "$%.2f spent", cost)
+            } else if let balanceInfos = result.balanceInfos, !balanceInfos.isEmpty {
+                metrics = balanceInfos.map { balance in
+                    String(format: "%@%.2f %@ remaining", balance.currencySymbol, balance.totalBalance, balance.currency)
+                }.joined(separator: ", ")
             } else if let balance = result.details?.creditsBalance {
                 // Balance-style providers (cost nil): show remaining balance.
                 metrics += String(format: "%@%.2f remaining", result.details?.balanceCurrencySymbol ?? "", balance)

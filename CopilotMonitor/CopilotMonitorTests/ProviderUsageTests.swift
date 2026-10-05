@@ -383,6 +383,32 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertTrue(second.errors.isEmpty)
     }
 
+    func testProviderManagerFetchesOnlyEnabledProviderIdentifiers() async {
+        let claudeProvider = CountingStubProvider(
+            identifier: .claude,
+            minimumFetchInterval: 0,
+            delayNanoseconds: 0,
+            result: makeQuotaResult(remaining: 42)
+        )
+        let geminiProvider = CountingStubProvider(
+            identifier: .geminiCLI,
+            minimumFetchInterval: 0,
+            delayNanoseconds: 0,
+            result: makeQuotaResult(remaining: 30)
+        )
+        let manager = ProviderManager(providers: [claudeProvider, geminiProvider])
+
+        let result = await manager.fetchAll(enabledProviderIdentifiers: [.claude])
+        let claudeFetchCount = await claudeProvider.fetchCount()
+        let geminiFetchCount = await geminiProvider.fetchCount()
+
+        XCTAssertEqual(claudeFetchCount, 1)
+        XCTAssertEqual(geminiFetchCount, 0)
+        XCTAssertNotNil(result.results[.claude])
+        XCTAssertNil(result.results[.geminiCLI])
+        XCTAssertNil(result.errors[.geminiCLI])
+    }
+
     func testProviderManagerDeduplicatesConcurrentFetches() async {
         let provider = CountingStubProvider(
             identifier: .claude,

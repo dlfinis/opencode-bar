@@ -23,6 +23,17 @@ struct GeminiUserInfoResponse: Codable {
 enum GeminiQuotaAPI {
     private static let endpoint = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")
 
+    static var userAgent: String {
+        #if arch(arm64)
+        let architecture = "arm64"
+        #elseif arch(x86_64)
+        let architecture = "x86_64"
+        #else
+        let architecture = "unknown"
+        #endif
+        return "GeminiCLI/1.0.0/gemini-2.5-pro (darwin; \(architecture))"
+    }
+
     static func fetchQuota(
         accessToken: String,
         projectId: String,
@@ -36,6 +47,7 @@ enum GeminiQuotaAPI {
         request.httpMethod = "POST"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["project": projectId])
         request.timeoutInterval = 10
 

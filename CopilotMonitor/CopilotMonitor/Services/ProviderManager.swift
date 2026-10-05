@@ -107,9 +107,14 @@ actor ProviderManager {
     /// Fetches usage data from all registered providers in parallel
     /// - Returns: FetchAllResult containing both successful results and error messages
     /// - Note: Returns partial results if some providers fail (graceful degradation)
-    func fetchAll() async -> FetchAllResult {
-        logger.info("🔵 [ProviderManager] fetchAll() started - \(self.providers.count) providers")
-        self.debugLog("🔵 fetchAll() started - \(self.providers.count) providers")
+    func fetchAll(enabledProviderIdentifiers: Set<ProviderIdentifier>? = nil) async -> FetchAllResult {
+        let providersToFetch = enabledProviderIdentifiers.map { identifiers in
+            providers.filter { identifiers.contains($0.identifier) }
+        } ?? providers
+        let providerCount = providersToFetch.count
+
+        logger.info("🔵 [ProviderManager] fetchAll() started - \(providerCount) providers")
+        self.debugLog("🔵 fetchAll() started - \(providerCount) providers")
 
         var results: [ProviderIdentifier: ProviderResult] = [:]
         var errors: [ProviderIdentifier: String] = [:]
@@ -117,7 +122,7 @@ actor ProviderManager {
         // Use TaskGroup for parallel fetching with timeout
         // Return type: (identifier, result, errorMessage)
         await withTaskGroup(of: (ProviderIdentifier, ProviderResult?, String?).self) { group in
-            for provider in self.providers {
+            for provider in providersToFetch {
                 logger.debug("🟡 [ProviderManager] Adding fetch task for \(provider.identifier.displayName)")
                 self.debugLog("🟡 Adding fetch task for \(provider.identifier.displayName)")
                 
@@ -151,8 +156,8 @@ actor ProviderManager {
             }
         }
 
-        logger.info("🟢 [ProviderManager] fetchAll() completed: \(results.count)/\(self.providers.count) providers succeeded, \(errors.count) errors")
-        self.debugLog("🟢 fetchAll() completed: \(results.count)/\(self.providers.count) providers succeeded, \(errors.count) errors")
+        logger.info("🟢 [ProviderManager] fetchAll() completed: \(results.count)/\(providerCount) providers succeeded, \(errors.count) errors")
+        self.debugLog("🟢 fetchAll() completed: \(results.count)/\(providerCount) providers succeeded, \(errors.count) errors")
         return FetchAllResult(results: results, errors: errors)
     }
     

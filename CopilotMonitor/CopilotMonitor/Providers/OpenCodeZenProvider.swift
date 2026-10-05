@@ -3,6 +3,204 @@ import os.log
 
 private let logger = Logger(subsystem: "com.opencodeproviders", category: "OpenCodeZenProvider")
 
+enum AlibabaActivityCache {
+    private static let lock = NSLock()
+    private static var value: [String: OpenCodeZenProvider.AlibabaModelActivity] = [:]
+
+    static func set(_ activity: [String: OpenCodeZenProvider.AlibabaModelActivity]) {
+        lock.lock()
+        value = activity
+        lock.unlock()
+    }
+
+    static func get() -> [String: OpenCodeZenProvider.AlibabaModelActivity] {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
+/// Personal Token Plan monthly quota tiers (Singapore, Credits per 30-day
+/// subscription cycle). Raw value is the monthly quota, so presets compare by
+/// cost value rather than by name (see the subscription preset rule).
+enum AlibabaQuotaTier: Int, CaseIterable {
+    case lite = 11_500
+    case essential = 25_500
+    case standard = 45_000
+    case pro = 180_000
+
+    var label: String {
+        switch self {
+        case .lite: return "Lite (11,500)"
+        case .essential: return "Essential (25,500)"
+        case .standard: return "Standard (45,000)"
+        case .pro: return "Pro (180,000)"
+        }
+    }
+}
+
+/// One calibration point: the console usage percentage read at a moment plus
+/// the local OpenCode Alibaba token/message totals at that same moment. Two
+/// samples close the loop for a token→Credit and Credits/hour inference.
+struct AlibabaQuotaSample: Codable, Equatable {
+    let date: Date
+    let percentUsed: Double
+    let totalTokens: Int
+    let nonCacheTokens: Int
+    let messages: Int
+}
+
+struct AlibabaQuotaProjection: Equatable {
+    let usedCredits: Double
+    let remainingCredits: Double
+    let sampleCount: Int
+    let creditsPerHour: Double?
+    let creditsPerDay: Double?
+    let daysToExhaust: Double?
+    let creditsPerMessage: Double?
+    let rateWindowHours: Double?
+}
+
+/// Manual quota calibration store. The console percentage is the only real
+/// signal; Credits/day and days-to-exhaust come from the delta between the two
+/// most recent samples. Persists to `UserDefaults` like SubscriptionSettings.
+final class AlibabaQuotaCalibration {
+    static let shared = AlibabaQuotaCalibration()
+
+    static let defaultMonthlyQuota = AlibabaQuotaTier.standard.rawValue
+    private static let quotaKey = "alibaba_quota_v1.monthlyQuota"
+    private static let samplesKey = "alibaba_quota_v1.samples"
+    private static let maxSamples = 120
+
+    private let defaults: UserDefaults
+    private(set) var samples: [AlibabaQuotaSample] = []
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if let data = defaults.data(forKey: Self.samplesKey),
+           let decoded = try? JSONDecoder().decode([AlibabaQuotaSample].self, from: data) {
+            samples = decoded.sorted { $0.date < $1.date }
+        }
+    }
+
+    var monthlyQuota: Int {
+        get {
+            let stored = defaults.integer(forKey: Self.quotaKey)
+            return stored > 0 ? stored : Self.defaultMonthlyQuota
+        }
+        set {
+            defaults.set(max(1, newValue), forKey: Self.quotaKey)
+        }
+    }
+
+    var hasConfiguredQuota: Bool {
+        defaults.object(forKey: Self.quotaKey) != nil
+    }
+
+    var hasSamples: Bool { !samples.isEmpty }
+
+    /// Records a sample from the current Alibaba activity cache. Token/message
+    /// totals are the same 30-day basis across samples, so their difference
+    /// approximates consumption between the two console reads.
+    func recordSnapshot(percent: Double, now: Date = Date()) {
+        let activity = AlibabaActivityCache.get()
+        var totalTokens = 0
+        var nonCacheTokens = 0
+        var messages = 0
+        for model in activity.values {
+            let nonCache = model.inputTokens + model.outputTokens
+            nonCacheTokens += nonCache
+            totalTokens += nonCache + model.cacheReadTokens + model.cacheWriteTokens
+            messages += model.messages
+        }
+        append(AlibabaQuotaSample(
+            date: now,
+            percentUsed: percent,
+            totalTokens: totalTokens,
+            nonCacheTokens: nonCacheTokens,
+            messages: messages
+        ))
+        save()
+        debugLog("Alibaba quota snapshot recorded: \(percent)% (samples=\(samples.count))")
+    }
+
+    func clearSamples() {
+        samples = []
+        defaults.removeObject(forKey: Self.samplesKey)
+        debugLog("Alibaba quota samples cleared")
+    }
+
+    func currentProjection() -> AlibabaQuotaProjection? {
+        Self.projection(samples: samples, monthlyQuota: monthlyQuota)
+    }
+
+    private func append(_ sample: AlibabaQuotaSample) {
+        samples.append(sample)
+        samples.sort { $0.date < $1.date }
+        if samples.count > Self.maxSamples {
+            samples.removeFirst(samples.count - Self.maxSamples)
+        }
+    }
+
+    private func save() {
+        if let data = try? JSONEncoder().encode(samples) {
+            defaults.set(data, forKey: Self.samplesKey)
+        }
+    }
+
+    /// Pure projection so the arithmetic is unit-testable without the store.
+    static func projection(samples: [AlibabaQuotaSample], monthlyQuota: Int) -> AlibabaQuotaProjection? {
+        guard monthlyQuota > 0,
+              let latest = samples.max(by: { $0.date < $1.date }) else {
+            return nil
+        }
+
+        let quota = Double(monthlyQuota)
+        let used = latest.percentUsed / 100.0 * quota
+        let remaining = max(0, quota - used)
+
+        var creditsPerHour: Double?
+        var creditsPerMessage: Double?
+        var rateWindowHours: Double?
+
+        let sorted = samples.sorted { $0.date < $1.date }
+        if sorted.count >= 2 {
+            let earlier = sorted[sorted.count - 2]
+            let later = sorted[sorted.count - 1]
+            let hours = later.date.timeIntervalSince(earlier.date) / 3600.0
+            let deltaCredits = (later.percentUsed - earlier.percentUsed) / 100.0 * quota
+            if hours > 0, deltaCredits > 0 {
+                creditsPerHour = deltaCredits / hours
+                rateWindowHours = hours
+                let deltaMessages = later.messages - earlier.messages
+                if deltaMessages > 0 {
+                    creditsPerMessage = deltaCredits / Double(deltaMessages)
+                }
+            }
+        }
+
+        let creditsPerDay = creditsPerHour.map { $0 * 24.0 }
+        let daysToExhaust: Double?
+        if let perDay = creditsPerDay, perDay > 0 {
+            daysToExhaust = remaining / perDay
+        } else {
+            daysToExhaust = nil
+        }
+
+        return AlibabaQuotaProjection(
+            usedCredits: used,
+            remainingCredits: remaining,
+            sampleCount: samples.count,
+            creditsPerHour: creditsPerHour,
+            creditsPerDay: creditsPerDay,
+            daysToExhaust: daysToExhaust,
+            creditsPerMessage: creditsPerMessage,
+            rateWindowHours: rateWindowHours
+        )
+    }
+}
+
+
 private func debugLog(_ message: String) {
     let msg = "[\(Date())] OpenCodeZen: \(message)\n"
     if let data = msg.data(using: .utf8) {
@@ -25,6 +223,17 @@ final class OpenCodeZenProvider: ProviderProtocol {
     let identifier: ProviderIdentifier = .openCodeZen
     let type: ProviderType = .payAsYouGo
     let fetchTimeout: TimeInterval = 60.0
+    private static let alibabaStatsRefreshInterval: TimeInterval = 5 * 60
+    private var lastAlibabaStatsAttempt: Date?
+    private var cachedAlibabaActivity: [String: AlibabaModelActivity] = [:]
+
+    struct AlibabaModelActivity: Equatable {
+        var messages: Int = 0
+        var inputTokens: Int = 0
+        var outputTokens: Int = 0
+        var cacheReadTokens: Int = 0
+        var cacheWriteTokens: Int = 0
+    }
 
     /// Path to opencode CLI binary (lazily resolved)
     private lazy var opencodePath: URL? = {
@@ -179,6 +388,23 @@ final class OpenCodeZenProvider: ProviderProtocol {
             modelCosts: stats.modelCosts,
             modelMessages: stats.modelMessages
         )
+        let now = Date()
+        if lastAlibabaStatsAttempt.map({ now.timeIntervalSince($0) >= Self.alibabaStatsRefreshInterval }) ?? true {
+            lastAlibabaStatsAttempt = now
+            do {
+                let alibabaOutput = try await runOpenCodeStats(days: 30)
+                if Self.hasModelUsageSection(in: alibabaOutput) {
+                    cachedAlibabaActivity = Self.parseAlibabaActivity(from: alibabaOutput)
+                    AlibabaActivityCache.set(cachedAlibabaActivity)
+                    let modelCount = cachedAlibabaActivity.count
+                    logger.info("Alibaba local activity updated for \(modelCount) model(s) over 30 days")
+                } else {
+                    logger.warning("Alibaba local stats output has no MODEL USAGE section; preserving cached activity")
+                }
+            } catch {
+                logger.warning("Alibaba local stats collection failed: \(error.localizedDescription)")
+            }
+        }
 
         let monthlyLimit = 1000.0
         let utilization = min((displayStats.totalCost / monthlyLimit) * 100, 100)
@@ -202,6 +428,58 @@ final class OpenCodeZenProvider: ProviderProtocol {
             usage: .payAsYouGo(utilization: utilization, cost: displayStats.totalCost, resetsAt: nil),
             details: details
         )
+    }
+
+    static func parseAlibabaActivity(from output: String) -> [String: AlibabaModelActivity] {
+        var result: [String: AlibabaModelActivity] = [:]
+        var currentModel: String?
+        var inModelSection = false
+        for rawLine in output.components(separatedBy: .newlines) {
+            let line = rawLine.replacingOccurrences(of: #"\u{001B}\[[0-9;]*[A-Za-z]"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("│") else { continue }
+            let text = trimmedTableCell(line)
+            if isStatsSectionHeader(text) {
+                inModelSection = text == "MODEL USAGE"
+                currentModel = nil
+                continue
+            }
+            guard inModelSection else { continue }
+            if text.hasPrefix("Messages") || text.hasPrefix("Input Tokens") || text.hasPrefix("Output Tokens") || text.hasPrefix("Cache Read") || text.hasPrefix("Cache Write") {
+                guard let model = currentModel, model.hasPrefix("alibaba-token-plan/"), let value = tokenCount(in: text) else { continue }
+                var stats = result[model] ?? AlibabaModelActivity()
+                if text.hasPrefix("Messages") { stats.messages = value }
+                else if text.hasPrefix("Input Tokens") { stats.inputTokens = value }
+                else if text.hasPrefix("Output Tokens") { stats.outputTokens = value }
+                else if text.hasPrefix("Cache Read") { stats.cacheReadTokens = value }
+                else { stats.cacheWriteTokens = value }
+                result[model] = stats
+            } else if !isStatsMetricLine(text) {
+                currentModel = text
+            }
+        }
+        return result
+    }
+
+    static func hasModelUsageSection(in output: String) -> Bool {
+        output.components(separatedBy: .newlines).contains { rawLine in
+            let line = rawLine.replacingOccurrences(
+                of: #"\u{001B}\[[0-9;]*[A-Za-z]"#,
+                with: "",
+                options: .regularExpression
+            ).trimmingCharacters(in: .whitespaces)
+            return line.hasPrefix("│") && trimmedTableCell(line) == "MODEL USAGE"
+        }
+    }
+
+    private static func tokenCount(in text: String) -> Int? {
+        guard let range = text.range(of: #"[0-9][0-9,.]*\s*[KkMm]?"#, options: .regularExpression) else { return nil }
+        let token = String(text[range]).replacingOccurrences(of: ",", with: "").trimmingCharacters(in: .whitespaces)
+        let suffix = token.last?.lowercased()
+        let numeric = (suffix == "k" || suffix == "m") ? String(token.dropLast()) : token
+        guard let value = Double(numeric) else { return nil }
+        let multiplier = suffix == "k" ? 1_000.0 : (suffix == "m" ? 1_000_000.0 : 1.0)
+        return Int((value * multiplier).rounded())
     }
 
     private func runOpenCodeStats(days: Int) async throws -> String {

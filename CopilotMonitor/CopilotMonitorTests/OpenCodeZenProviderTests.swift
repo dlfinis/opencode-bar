@@ -3,6 +3,37 @@ import XCTest
 
 final class OpenCodeZenProviderTests: XCTestCase {
 
+    func testParseAlibabaTokenPlanActivityMetricsAndProviderPrefix() {
+        let fixture = #"""
+        │ MODEL USAGE │
+        │ alibaba-token-plan/qwen3.8-max │
+        │ Messages 12 │
+        │ Input Tokens 12.5K │
+        │ Output Tokens 1.2K │
+        │ Cache Read 3M │
+        │ Cache Write 45 │
+        │ qwen/qwen3.8-max │
+        │ Messages 99 │
+        │ alibaba-token-plan/qwen3.8-flash │
+        │ Messages 4 │
+        │ Input Tokens 2K │
+        │ Output Tokens 500 │
+        │ Cache Read 0 │
+        │ Cache Write 1K │
+        """#
+        let parsed = OpenCodeZenProvider.parseAlibabaActivity(from: fixture)
+        XCTAssertEqual(parsed.count, 2)
+        XCTAssertEqual(parsed["alibaba-token-plan/qwen3.8-max"], .init(messages: 12, inputTokens: 12_500, outputTokens: 1_200, cacheReadTokens: 3_000_000, cacheWriteTokens: 45))
+        XCTAssertEqual(parsed["alibaba-token-plan/qwen3.8-flash"], .init(messages: 4, inputTokens: 2_000, outputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 1_000))
+        XCTAssertTrue(OpenCodeZenProvider.parseAlibabaActivity(from: "").isEmpty)
+        XCTAssertTrue(OpenCodeZenProvider.hasModelUsageSection(in: fixture))
+    }
+
+    func testModelUsageSectionDetectionRejectsUnrecognizedStatsOutput() {
+        XCTAssertTrue(OpenCodeZenProvider.hasModelUsageSection(in: "│ MODEL USAGE │"))
+        XCTAssertFalse(OpenCodeZenProvider.hasModelUsageSection(in: "│ TOTAL COST │"))
+    }
+
     func testParseModelCostsReadsCurrentMultilineStatsFormat() {
         let output = #"""
         ┌────────────────────────────────────────────────────────┐
@@ -177,5 +208,48 @@ final class OpenCodeZenProviderTests: XCTestCase {
         // Tuple arrays aren't Equatable, so compare pids and elapsed seconds separately.
         XCTAssertEqual(staleProcesses.map(\.pid), [123])
         XCTAssertEqual(staleProcesses.map(\.etimeSeconds), [3_601])
+    }
+
+    // MARK: - Alibaba quota calibration projection
+
+    /// Real console pair: 0.94% then 2.1% about one hour apart on a Standard
+    /// (45,000 Credit) plan. Locks the derived pace, exhaust window and rate.
+    @MainActor
+    func testAlibabaQuotaProjectionFromConsoleSnapshotPair() {
+        let start = Date(timeIntervalSince1970: 0)
+        let samples = [
+            AlibabaQuotaSample(date: start, percentUsed: 0.94, totalTokens: 16_757_800, nonCacheTokens: 1_357_800, messages: 192),
+            AlibabaQuotaSample(date: start.addingTimeInterval(3600), percentUsed: 2.1, totalTokens: 41_266_600, nonCacheTokens: 2_266_600, messages: 261)
+        ]
+
+        let projection = AlibabaQuotaCalibration.projection(samples: samples, monthlyQuota: 45_000)
+        let result = try? XCTUnwrap(projection)
+        XCTAssertNotNil(result)
+        guard let result else { return }
+
+        XCTAssertEqual(result.usedCredits, 945.0, accuracy: 0.5)
+        XCTAssertEqual(result.remainingCredits, 44_055.0, accuracy: 0.5)
+        XCTAssertEqual(result.creditsPerHour ?? 0, 522.0, accuracy: 2.0)
+        XCTAssertEqual(result.creditsPerDay ?? 0, 12_528.0, accuracy: 50.0)
+        XCTAssertEqual(result.daysToExhaust ?? 0, 3.52, accuracy: 0.05)
+        XCTAssertEqual(result.creditsPerMessage ?? 0, 7.57, accuracy: 0.1)
+        XCTAssertEqual(result.rateWindowHours ?? 0, 1.0, accuracy: 0.01)
+        XCTAssertEqual(result.sampleCount, 2)
+    }
+
+    @MainActor
+    func testAlibabaQuotaProjectionSingleSampleHasNoPace() {
+        let samples = [
+            AlibabaQuotaSample(date: Date(timeIntervalSince1970: 0), percentUsed: 0.94, totalTokens: 1_000_000, nonCacheTokens: 500_000, messages: 10)
+        ]
+        let result = AlibabaQuotaCalibration.projection(samples: samples, monthlyQuota: 45_000)
+        XCTAssertNotNil(result?.usedCredits)
+        XCTAssertNil(result?.creditsPerDay)
+        XCTAssertNil(result?.daysToExhaust)
+    }
+
+    @MainActor
+    func testAlibabaQuotaCreditsFormattingGroups() {
+        XCTAssertEqual(StatusBarController.alibabaQuotaCredits(44055.4), "44,055")
     }
 }

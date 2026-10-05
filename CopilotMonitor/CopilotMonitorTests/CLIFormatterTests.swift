@@ -504,6 +504,35 @@ final class CLIFormatterTests: XCTestCase {
         XCTAssertNil(provider["cost"])
     }
 
+    func testDeepSeekFormattersPreserveCNYAndUSDBalances() throws {
+        let balances = [
+            ProviderBalanceInfo(currency: "CNY", totalBalance: 0.0, grantedBalance: 0.0, toppedUpBalance: 0.0),
+            ProviderBalanceInfo(currency: "USD", totalBalance: 26.0, grantedBalance: 0.0, toppedUpBalance: 26.0)
+        ]
+        let details = DetailedUsage(
+            creditsBalance: 26.0,
+            balanceCurrency: "USD",
+            balanceGranted: 0.0,
+            balanceToppedUp: 26.0
+        )
+        let result = ProviderResult(
+            usage: .payAsYouGo(utilization: 0, cost: nil, resetsAt: nil),
+            details: details,
+            balanceInfos: balances
+        )
+
+        let table = TableFormatter.format([.deepSeek: result])
+        XCTAssertTrue(table.contains("¥0.00 CNY remaining"), "Missing zero CNY balance:\n\(table)")
+        XCTAssertTrue(table.contains("$26.00 USD remaining"), "Missing funded USD balance:\n\(table)")
+
+        let json = try JSONFormatter.format([.deepSeek: result])
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: [String: Any]])
+        let provider = try XCTUnwrap(payload["deepseek"])
+        let formattedBalances = try XCTUnwrap(provider["balances"] as? [[String: Any]])
+        XCTAssertEqual(formattedBalances.map { $0["currency"] as? String }, ["CNY", "USD"])
+        XCTAssertEqual(formattedBalances.compactMap { $0["balance"] as? Double }, [0.0, 26.0])
+    }
+
     /// Providers with a real cost keep the existing "$x spent" rendering.
     func testPayAsYouGoWithCostKeepsSpentRendering() throws {
         let usage = ProviderUsage.payAsYouGo(utilization: 0, cost: 12.34, resetsAt: nil)

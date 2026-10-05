@@ -35,6 +35,11 @@ final class ProviderViewModel: ObservableObject {
         
         var enabledProviders: [ProviderIdentifier] = []
         for identifier in ProviderIdentifier.allCases {
+            let enabledKey = "provider.\(identifier.rawValue).enabled"
+            let isEnabled = UserDefaults.standard.object(forKey: enabledKey) == nil
+                || UserDefaults.standard.bool(forKey: enabledKey)
+            guard isEnabled else { continue }
+
             if await providerManager.getProvider(for: identifier) != nil {
                 enabledProviders.append(identifier)
             }
@@ -47,7 +52,9 @@ final class ProviderViewModel: ObservableObject {
         
         // Fetch all providers in parallel
         logger.debug("🟡 [ProviderViewModel] Calling providerManager.fetchAll()")
-        let fetchResult = await providerManager.fetchAll()
+        let fetchResult = await providerManager.fetchAll(
+            enabledProviderIdentifiers: Set(enabledProviders)
+        )
         logger.info("🟢 [ProviderViewModel] fetchAll() returned \(fetchResult.results.count) results, \(fetchResult.errors.count) errors")
         
         // Update state

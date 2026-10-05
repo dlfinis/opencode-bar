@@ -793,9 +793,12 @@ final class StatusBarController: NSObject {
            logger.debug("🟡 [StatusBarController] loadingProviders set: \(loadingNames)")
            updateMultiProviderMenu()
 
-           logger.info("🟡 [StatusBarController] fetchMultiProviderData: Calling ProviderManager.fetchAll()")
-           debugLog("🟡 fetchMultiProviderData: calling ProviderManager.fetchAll()")
-           let fetchResult = await ProviderManager.shared.fetchAll()
+            logger.info("🟡 [StatusBarController] fetchMultiProviderData: Calling ProviderManager.fetchAll()")
+            debugLog("🟡 fetchMultiProviderData: calling ProviderManager.fetchAll()")
+            let enabledProviderIdentifiers = Set(enabledProviders.map { $0.identifier })
+            let fetchResult = await ProviderManager.shared.fetchAll(
+                enabledProviderIdentifiers: enabledProviderIdentifiers
+            )
            debugLog("🟢 fetchMultiProviderData: fetchAll returned \(fetchResult.results.count) results, \(fetchResult.errors.count) errors")
            logger.info("🟢 [StatusBarController] fetchMultiProviderData: fetchAll() returned \(fetchResult.results.count) results, \(fetchResult.errors.count) errors")
 
@@ -1701,7 +1704,17 @@ final class StatusBarController: NSObject {
                         // surface the remaining balance through details.
                         let costValue = cost ?? result.details?.creditsBalance ?? 0.0
                         let title: String
-                        if let symbol = result.details?.balanceCurrencySymbol, !symbol.isEmpty {
+                        if let balanceInfos = result.balanceInfos, !balanceInfos.isEmpty {
+                            // Only surface funded currencies in the main row (a
+                            // ¥0.00 ledger should not clutter the title; it stays
+                            // in the submenu). Fall back to all if everything is
+                            // zero so the account state remains visible.
+                            let shown = Self.deepSeekMainRowBalances(balanceInfos)
+                            let balances = shown.map {
+                                String(format: "%@%.2f", $0.currencySymbol, $0.totalBalance)
+                            }.joined(separator: ", ")
+                            title = "\(identifier.displayName) (\(balances))"
+                        } else if let symbol = result.details?.balanceCurrencySymbol, !symbol.isEmpty {
                             title = String(format: "%@ (%@%.2f)", identifier.displayName, symbol, costValue)
                         } else {
                             title = String(format: "%@ ($%.2f)", identifier.displayName, costValue)
@@ -1714,7 +1727,11 @@ final class StatusBarController: NSObject {
                         item.tag = 999
 
                         if let details = result.details, details.hasAnyValue {
-                            item.submenu = createDetailSubmenu(details, identifier: identifier)
+                            item.submenu = createDetailSubmenu(
+                                details,
+                                identifier: identifier,
+                                balanceInfos: result.balanceInfos
+                            )
                         }
 
                        menu.insertItem(item, at: insertIndex)
@@ -1741,7 +1758,7 @@ final class StatusBarController: NSObject {
                     menu.insertItem(item, at: insertIndex)
                     insertIndex += 1
                 }
-           }
+            }
 
             // Copilot Add-on (always show, even when $0.00)
             if isProviderEnabled(.copilot) {
@@ -1833,7 +1850,55 @@ final class StatusBarController: NSObject {
          menu.insertItem(quotaHeader, at: insertIndex)
          insertIndex += 1
 
-         var hasQuota = false
+          var hasQuota = false
+          let alibabaActivity = AlibabaActivityCache.get()
+          if !alibabaActivity.isEmpty {
+              hasQuota = true
+              let activityItem = NSMenuItem(title: "Alibaba Token Plan (OpenCode Stats, 30d)", action: nil, keyEquivalent: "")
+              activityItem.image = NSImage(
+                  systemSymbolName: "cloud.fill",
+                  accessibilityDescription: "Alibaba Cloud activity"
+              )
+              activityItem.tag = 999
+              let submenu = NSMenu()
+              for (model, stats) in alibabaActivity.sorted(by: { $0.key < $1.key }) {
+                  let shortModel = model.replacingOccurrences(of: "alibaba-token-plan/", with: "")
+                  let header = NSMenuItem()
+                  header.view = createDisabledLabelView(
+                      text: "\(shortModel) - \(stats.messages) msgs",
+                      font: MenuDesignToken.Typography.boldFont
+                  )
+                  submenu.addItem(header)
+                  let tokenLine = [
+                      "In: \(Self.compactTokenCount(stats.inputTokens))",
+                      "Out: \(Self.compactTokenCount(stats.outputTokens))",
+                      "Cache: \(Self.compactTokenCount(stats.cacheReadTokens))"
+                  ].joined(separator: "  ")
+                  let metric = NSMenuItem()
+                  metric.view = createDisabledLabelView(
+                      text: tokenLine,
+                      indent: MenuDesignToken.Spacing.submenuIndent
+                  )
+                  submenu.addItem(metric)
+              }
+              activityItem.submenu = submenu
+              menu.insertItem(activityItem, at: insertIndex)
+              insertIndex += 1
+          }
+
+          let alibabaCalibration = AlibabaQuotaCalibration.shared
+          if alibabaCalibration.hasSamples || alibabaCalibration.hasConfiguredQuota || !alibabaActivity.isEmpty {
+              hasQuota = true
+              let quotaItem = NSMenuItem(title: "Alibaba Quota (Manual Calibration)", action: nil, keyEquivalent: "")
+              quotaItem.image = NSImage(
+                  systemSymbolName: "target",
+                  accessibilityDescription: "Alibaba quota calibration"
+              )
+              quotaItem.tag = 999
+              quotaItem.submenu = createAlibabaQuotaSubmenu()
+              menu.insertItem(quotaItem, at: insertIndex)
+              insertIndex += 1
+          }
          var deferredUnavailableItems: [NSMenuItem] = []
          var deferredUnavailableProviders: [ProviderIdentifier] = []
 
@@ -3184,6 +3249,94 @@ final class StatusBarController: NSObject {
                 shouldPrompt = false
             }
         }
+    }
+
+    // MARK: - Alibaba Quota Calibration Actions
+
+    @objc func recordAlibabaQuotaSnapshot(_ sender: NSMenuItem) {
+        let calibration = AlibabaQuotaCalibration.shared
+
+        let alert = NSAlert()
+        alert.messageText = "Console Usage Percentage"
+        alert.informativeText = "Enter the used % shown on the plan page (e.g. 2.1):"
+        alert.addButton(withTitle: "Record")
+        alert.addButton(withTitle: "Cancel")
+
+        let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        inputField.placeholderString = "Used percent"
+        if let projection = calibration.currentProjection() {
+            inputField.stringValue = String(format: "%.2f", projection.usedCredits / Double(calibration.monthlyQuota) * 100)
+        }
+        alert.accessoryView = inputField
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let normalized = inputField.stringValue.replacingOccurrences(of: ",", with: ".")
+        guard let percent = Double(normalized), (0...100).contains(percent) else {
+            let errorAlert = NSAlert()
+            errorAlert.messageText = "Invalid Percent"
+            errorAlert.informativeText = "Enter a number between 0 and 100."
+            errorAlert.addButton(withTitle: "OK")
+            errorAlert.runModal()
+            return
+        }
+
+        calibration.recordSnapshot(percent: percent)
+        debugLog("recordAlibabaQuotaSnapshot: recorded \(percent)%")
+        menu.cancelTracking()
+        updateMultiProviderMenu()
+    }
+
+    @objc func clearAlibabaQuotaSamples(_ sender: NSMenuItem) {
+        AlibabaQuotaCalibration.shared.clearSamples()
+        menu.cancelTracking()
+        updateMultiProviderMenu()
+    }
+
+    @objc func openAlibabaTokenPlanPage(_ sender: NSMenuItem) {
+        if let url = URL(string: "https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc func alibabaQuotaTierSelected(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Int else { return }
+        AlibabaQuotaCalibration.shared.monthlyQuota = value
+        menu.cancelTracking()
+        updateMultiProviderMenu()
+    }
+
+    @objc func alibabaQuotaCustomSelected(_ sender: NSMenuItem) {
+        let calibration = AlibabaQuotaCalibration.shared
+
+        let alert = NSAlert()
+        alert.messageText = "Custom Monthly Quota"
+        alert.informativeText = "Enter your plan's monthly Credits (e.g. 45000):"
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        inputField.placeholderString = "Monthly Credits"
+        inputField.stringValue = "\(calibration.monthlyQuota)"
+        alert.accessoryView = inputField
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let normalized = inputField.stringValue.replacingOccurrences(of: ",", with: "")
+        guard let value = Int(normalized), value > 0 else {
+            let errorAlert = NSAlert()
+            errorAlert.messageText = "Invalid Quota"
+            errorAlert.informativeText = "Enter a positive whole number."
+            errorAlert.addButton(withTitle: "OK")
+            errorAlert.runModal()
+            return
+        }
+
+        calibration.monthlyQuota = value
+        menu.cancelTracking()
+        updateMultiProviderMenu()
     }
 
      // MARK: - Custom Menu Item Views

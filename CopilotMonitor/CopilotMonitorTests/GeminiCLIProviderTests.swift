@@ -148,6 +148,8 @@ final class GeminiCLIProviderTests: XCTestCase {
             XCTAssertEqual(request.url?.absoluteString, "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-access-token")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), GeminiQuotaAPI.userAgent)
+            XCTAssertTrue(GeminiQuotaAPI.userAgent.hasPrefix("GeminiCLI/1.0.0/gemini-2.5-pro (darwin; "))
             XCTAssertEqual(request.timeoutInterval, 10, accuracy: 0.001)
 
             let requestData = try XCTUnwrap(Self.requestBodyData(from: request))

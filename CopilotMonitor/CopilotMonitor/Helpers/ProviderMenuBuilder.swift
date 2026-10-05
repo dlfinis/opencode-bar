@@ -60,18 +60,40 @@ enum ModelUsageGrouper {
     }
 }
 
+struct DeepSeekBalanceDetailRow: Equatable {
+    let label: String
+    let currency: String
+    let currencySymbol: String
+    let value: Double
+}
+
 extension StatusBarController {
 
-    func createDetailSubmenu(_ details: DetailedUsage, identifier: ProviderIdentifier, accountId: String? = nil) -> NSMenu {
+    func createDetailSubmenu(
+        _ details: DetailedUsage,
+        identifier: ProviderIdentifier,
+        accountId: String? = nil,
+        balanceInfos: [ProviderBalanceInfo]? = nil
+    ) -> NSMenu {
         let submenu = NSMenu()
         let subscriptionAccountId = resolvedSubscriptionAccountId(details: details, fallback: accountId)
 
         switch identifier {
         case .deepSeek:
-            for (label, value) in Self.deepSeekBalanceRows(details: details) {
-                let item = NSMenuItem()
-                item.view = createDisabledLabelView(text: String(format: "%@: %@%.2f", label, details.balanceCurrencySymbol, value))
-                submenu.addItem(item)
+            if let balanceInfos, !balanceInfos.isEmpty {
+                for row in Self.deepSeekBalanceRows(balanceInfos: balanceInfos) {
+                    let item = NSMenuItem()
+                    item.view = createDisabledLabelView(
+                        text: "\(row.label) (\(row.currency)): \(row.currencySymbol)\(String(format: "%.2f", row.value))"
+                    )
+                    submenu.addItem(item)
+                }
+            } else {
+                for (label, value) in Self.deepSeekBalanceRows(details: details) {
+                    let item = NSMenuItem()
+                    item.view = createDisabledLabelView(text: String(format: "%@: %@%.2f", label, details.balanceCurrencySymbol, value))
+                    submenu.addItem(item)
+                }
             }
 
         case .openRouter:
@@ -1054,6 +1076,189 @@ extension StatusBarController {
         ]
         return rows.compactMap { label, value -> (label: String, value: Double)? in
             value.map { (label: label, value: $0) }
+        }
+    }
+
+    static func deepSeekBalanceRows(balanceInfos: [ProviderBalanceInfo]) -> [DeepSeekBalanceDetailRow] {
+        let orderedBalances = balanceInfos.sorted { lhs, rhs in
+            deepSeekCurrencySortOrder(lhs.currency) < deepSeekCurrencySortOrder(rhs.currency)
+        }
+        return orderedBalances.flatMap { balance in
+            [
+                DeepSeekBalanceDetailRow(
+                    label: "Balance",
+                    currency: balance.currency,
+                    currencySymbol: balance.currencySymbol,
+                    value: balance.totalBalance
+                ),
+                DeepSeekBalanceDetailRow(
+                    label: "Topped-up",
+                    currency: balance.currency,
+                    currencySymbol: balance.currencySymbol,
+                    value: balance.toppedUpBalance
+                ),
+                DeepSeekBalanceDetailRow(
+                    label: "Granted",
+                    currency: balance.currency,
+                    currencySymbol: balance.currencySymbol,
+                    value: balance.grantedBalance
+                )
+            ]
+        }
+    }
+
+    /// Compact token count for menu rows (e.g. 1.0M, 220.0K, 845) so the
+    /// Alibaba submenu stays readable. Pure/static for testing.
+    static func compactTokenCount(_ value: Int) -> String {
+        let magnitude = Double(value)
+        if magnitude >= 1_000_000 {
+            return String(format: "%.1fM", magnitude / 1_000_000)
+        }
+        if magnitude >= 1_000 {
+            return String(format: "%.1fK", magnitude / 1_000)
+        }
+        return "\(value)"
+    }
+
+    /// Currencies to show in the main pay-as-you-go row: only funded balances,
+    /// falling back to all when everything is zero so the account state is
+    /// still visible. Pure/static for testing.
+    static func deepSeekMainRowBalances(_ balanceInfos: [ProviderBalanceInfo]) -> [ProviderBalanceInfo] {
+        let funded = balanceInfos.filter { $0.totalBalance > 0 }
+        return funded.isEmpty ? balanceInfos : funded
+    }
+
+    // MARK: - Alibaba Quota Calibration Submenu
+
+    /// Whole-number Credits with grouping separators (e.g. "44,055"). Uses a
+    /// fixed en_US locale so grouping is a comma regardless of system locale
+    /// (UI text is English per the repo convention).
+    static func alibabaQuotaCredits(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        formatter.locale = Locale(identifier: "en_US")
+        return formatter.string(from: NSNumber(value: value)) ?? "\(Int(value))"
+    }
+
+    func createAlibabaQuotaSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        let calibration = AlibabaQuotaCalibration.shared
+        let quota = calibration.monthlyQuota
+        let projection = calibration.currentProjection()
+
+        let quotaHeader = NSMenuItem()
+        quotaHeader.view = createDisabledLabelView(
+            text: "Monthly quota: \(Self.alibabaQuotaCredits(Double(quota))) Cr",
+            font: MenuDesignToken.Typography.boldFont
+        )
+        submenu.addItem(quotaHeader)
+
+        if let projection {
+            let used = NSMenuItem()
+            used.view = createDisabledLabelView(
+                text: "Used: \(Self.alibabaQuotaCredits(projection.usedCredits)) Cr  ·  Left: \(Self.alibabaQuotaCredits(projection.remainingCredits)) Cr"
+            )
+            submenu.addItem(used)
+
+            if let perDay = projection.creditsPerDay,
+               let perHour = projection.creditsPerHour {
+                let pace = NSMenuItem()
+                pace.view = createDisabledLabelView(
+                    text: "Pace: ~\(Self.alibabaQuotaCredits(perDay)) Cr/day (~\(Self.alibabaQuotaCredits(perHour))/h)"
+                )
+                submenu.addItem(pace)
+            }
+            if let days = projection.daysToExhaust {
+                let exhaust = NSMenuItem()
+                exhaust.view = createDisabledLabelView(
+                    text: "Est. exhaust: ~\(String(format: "%.1f", days)) days at this pace",
+                    font: MenuDesignToken.Typography.boldFont
+                )
+                submenu.addItem(exhaust)
+            }
+            if let perMessage = projection.creditsPerMessage,
+               let perDayValue = projection.creditsPerDay {
+                let rate = NSMenuItem()
+                rate.view = createDisabledLabelView(
+                    text: "≈\(String(format: "%.1f", perMessage)) Cr/message  ·  ~\(Self.alibabaQuotaCredits(perDayValue / 2)) Cr/day at 0.5×"
+                )
+                submenu.addItem(rate)
+            }
+            if projection.creditsPerDay == nil, projection.sampleCount < 2 {
+                let hint = NSMenuItem()
+                hint.view = createDisabledLabelView(text: "Record twice to see pace.")
+                submenu.addItem(hint)
+            }
+        } else {
+            let hint = NSMenuItem()
+            hint.view = createDisabledLabelView(text: "Read % on the plan page, then Record.")
+            submenu.addItem(hint)
+        }
+
+        submenu.addItem(NSMenuItem.separator())
+
+        let recordItem = NSMenuItem(
+            title: "Record Console Usage %…",
+            action: #selector(recordAlibabaQuotaSnapshot(_:)),
+            keyEquivalent: ""
+        )
+        recordItem.target = self
+        submenu.addItem(recordItem)
+
+        if calibration.hasSamples {
+            let clearItem = NSMenuItem(
+                title: "Clear Samples",
+                action: #selector(clearAlibabaQuotaSamples(_:)),
+                keyEquivalent: ""
+            )
+            clearItem.target = self
+            submenu.addItem(clearItem)
+        }
+
+        let openItem = NSMenuItem(
+            title: "Open Token Plan Page",
+            action: #selector(openAlibabaTokenPlanPage(_:)),
+            keyEquivalent: ""
+        )
+        openItem.target = self
+        submenu.addItem(openItem)
+
+        let quotaSubmenu = NSMenu(title: "Monthly Quota")
+        for tier in AlibabaQuotaTier.allCases {
+            let item = NSMenuItem(
+                title: tier.label,
+                action: #selector(alibabaQuotaTierSelected(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = tier.rawValue
+            if quota == tier.rawValue {
+                item.state = .on
+            }
+            quotaSubmenu.addItem(item)
+        }
+        let customQuotaItem = NSMenuItem(
+            title: "Set custom…",
+            action: #selector(alibabaQuotaCustomSelected(_:)),
+            keyEquivalent: ""
+        )
+        customQuotaItem.target = self
+        quotaSubmenu.addItem(customQuotaItem)
+
+        let quotaItem = NSMenuItem(title: "Monthly Quota", action: nil, keyEquivalent: "")
+        quotaItem.representedObject = "alibabaMonthlyQuota"
+        quotaItem.submenu = quotaSubmenu
+        submenu.addItem(quotaItem)
+
+        return submenu
+    }
+
+    private static func deepSeekCurrencySortOrder(_ currency: String) -> Int {
+        switch currency.uppercased() {
+        case "CNY": return 0
+        case "USD": return 1
+        default: return 2
         }
     }
 

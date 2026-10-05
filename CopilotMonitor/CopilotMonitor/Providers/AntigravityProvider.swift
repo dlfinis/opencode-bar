@@ -84,10 +84,67 @@ enum AntigravityProtobufValue {
 
 typealias AntigravityProtobufMessage = [Int: [AntigravityProtobufValue]]
 
-private struct AntigravityParsedCacheUsage {
+struct AntigravityParsedCacheUsage {
     let email: String?
     let modelBreakdown: [String: Double]
     let modelResetTimes: [String: Date]
+}
+
+struct AntigravityAvailableModelsResponse: Decodable {
+    struct Model: Decodable {
+        struct QuotaInfo: Decodable {
+            let remainingFraction: Double?
+            let resetTime: String?
+        }
+
+        let quotaInfo: QuotaInfo?
+        let displayName: String?
+        let modelName: String?
+    }
+
+    let models: [String: Model]?
+}
+
+enum AntigravityQuotaAPI {
+    static let endpoint = URL(string: "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels")
+
+    // This matches opencode-antigravity-auth 1.6.0's Antigravity quota request header.
+    static let userAgent = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "AppleWebKit/537.36 (KHTML, like Gecko)",
+        "Antigravity/1.18.3",
+        "Chrome/138.0.7204.235",
+        "Electron/37.3.1",
+        "Safari/537.36"
+    ].joined(separator: " ")
+
+    static func fetchAvailableModels(
+        accessToken: String,
+        projectId: String,
+        session: URLSession
+    ) async throws -> AntigravityAvailableModelsResponse {
+        guard let endpoint else {
+            throw ProviderError.networkError("Invalid Antigravity API endpoint")
+        }
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["project": projectId])
+        request.timeoutInterval = 10
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ProviderError.networkError("Invalid Antigravity response type")
+        }
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw ProviderError.networkError("HTTP \(httpResponse.statusCode)")
+        }
+
+        return try JSONDecoder().decode(AntigravityAvailableModelsResponse.self, from: data)
+    }
 }
 
 /// Provider for Antigravity usage tracking using local cache reverse parsing.
@@ -174,13 +231,16 @@ final class AntigravityProvider: ProviderProtocol {
             throw ProviderError.authenticationFailed("Unable to refresh Antigravity fallback token")
         }
 
-        let quotaResponse = try await GeminiQuotaAPI.fetchQuota(
+        let quotaResponse = try await AntigravityQuotaAPI.fetchAvailableModels(
             accessToken: accessToken,
             projectId: account.projectId,
             session: session
         )
 
-        let parsed = parseQuotaBuckets(quotaResponse.buckets)
+        let parsed = Self.parseAvailableModels(quotaResponse.models ?? [:])
+        guard !parsed.modelBreakdown.isEmpty else {
+            throw ProviderError.providerError("No model quota data in Antigravity response")
+        }
         let minRemaining = parsed.modelBreakdown.values.min() ?? 0.0
         logger.info(
             "Antigravity fallback fetch succeeded: \(parsed.modelBreakdown.count) models, min remaining \(String(format: "%.1f", minRemaining))%, email=\(account.email ?? "unknown")"
@@ -228,9 +288,9 @@ final class AntigravityProvider: ProviderProtocol {
             return nil
         }
 
-        let projectId = GeminiProjectPolicy.resolve(
-            primary: account.projectId,
-            fallback: account.managedProjectId
+        let projectId = AntigravityProjectPolicy.resolve(
+            managedProjectId: account.managedProjectId,
+            projectId: account.projectId
         )
         if projectId == GeminiProjectPolicy.fallbackProjectId {
             logger.info("Antigravity fallback account has no project ID; using default project fallback")
@@ -273,7 +333,9 @@ final class AntigravityProvider: ProviderProtocol {
         return nil
     }
 
-    private func parseQuotaBuckets(_ buckets: [GeminiQuotaResponse.Bucket]) -> AntigravityParsedCacheUsage {
+    static func parseAvailableModels(
+        _ models: [String: AntigravityAvailableModelsResponse.Model]
+    ) -> AntigravityParsedCacheUsage {
         var modelBreakdown: [String: Double] = [:]
         var modelResetTimes: [String: Date] = [:]
 
@@ -282,13 +344,19 @@ final class AntigravityProvider: ProviderProtocol {
         let iso8601FormatterNoFrac = ISO8601DateFormatter()
         iso8601FormatterNoFrac.formatOptions = [.withInternetDateTime]
 
-        for bucket in buckets {
-            let clampedFraction = max(0.0, min(1.0, bucket.remainingFraction))
-            modelBreakdown[bucket.modelId] = clampedFraction * 100.0
+        for (modelId, model) in models {
+            guard let remainingFraction = model.quotaInfo?.remainingFraction,
+                  remainingFraction.isFinite else {
+                continue
+            }
 
-            if let resetDate = iso8601Formatter.date(from: bucket.resetTime)
-                ?? iso8601FormatterNoFrac.date(from: bucket.resetTime) {
-                modelResetTimes[bucket.modelId] = resetDate
+            let clampedFraction = max(0.0, min(1.0, remainingFraction))
+            modelBreakdown[modelId] = clampedFraction * 100.0
+
+            if let resetTime = model.quotaInfo?.resetTime,
+               let resetDate = iso8601Formatter.date(from: resetTime)
+                ?? iso8601FormatterNoFrac.date(from: resetTime) {
+                modelResetTimes[modelId] = resetDate
             }
         }
 

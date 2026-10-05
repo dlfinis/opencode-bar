@@ -643,6 +643,21 @@ enum GeminiProjectPolicy {
     }
 }
 
+enum AntigravityProjectPolicy {
+    // Matches the default project used by opencode-antigravity-auth.
+    static let fallbackProjectId = "rising-fact-p41fc"
+
+    static func resolve(managedProjectId: String?, projectId: String?) -> String {
+        for candidate in [managedProjectId, projectId] {
+            let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return fallbackProjectId
+    }
+}
+
 enum GeminiOAuthRefreshError: LocalizedError, Equatable {
     case invalidResponse
     case rejected(statusCode: Int, code: String?, message: String?)
@@ -4491,9 +4506,9 @@ final class TokenManager: @unchecked Sendable {
                     return nil
                 }
 
-                let projectId = GeminiProjectPolicy.resolve(
-                    primary: account.projectId,
-                    fallback: account.managedProjectId
+                let projectId = AntigravityProjectPolicy.resolve(
+                    managedProjectId: account.managedProjectId,
+                    projectId: account.projectId
                 )
                 if projectId == GeminiProjectPolicy.fallbackProjectId {
                     logger.info("Antigravity account at index \(index) has no project ID; using default project fallback")

@@ -1,8 +1,169 @@
 import XCTest
 @testable import OpenCode_Bar
 
+private final class AntigravityTestURLProtocol: URLProtocol {
+    static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override static func canInit(with request: URLRequest) -> Bool { true }
+    override static func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.requestHandler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
 final class AntigravityProviderVarintTests: XCTestCase {
     private let provider = AntigravityProvider()
+
+    override func tearDown() {
+        AntigravityTestURLProtocol.requestHandler = nil
+        super.tearDown()
+    }
+
+    private func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AntigravityTestURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    private static func requestBodyData(from request: URLRequest) -> Data? {
+        if let body = request.httpBody {
+            return body
+        }
+
+        guard let stream = request.httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 1_024)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count >= 0 else { return nil }
+            if count == 0 { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
+
+    func testFetchAvailableModelsUsesAntigravityQuotaEndpointAndHeaders() async throws {
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+
+        AntigravityTestURLProtocol.requestHandler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(
+                request.url?.absoluteString,
+                "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+            )
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-access-token")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            XCTAssertEqual(
+                request.value(forHTTPHeaderField: "User-Agent"),
+                AntigravityQuotaAPI.userAgent
+            )
+            XCTAssertTrue(AntigravityQuotaAPI.userAgent.contains("Antigravity/1.18.3"))
+
+            let requestData = try XCTUnwrap(Self.requestBodyData(from: request))
+            let payload = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: requestData) as? [String: String]
+            )
+            XCTAssertEqual(payload, ["project": "test-cloud-project"])
+
+            let url = try XCTUnwrap(request.url)
+            let response = try XCTUnwrap(
+                HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)
+            )
+            let data = Data(#"{"models":{"gemini-3-pro":{"quotaInfo":{"remainingFraction":0.75,"resetTime":"2026-10-05T15:00:00Z"}}}}"#.utf8)
+            return (response, data)
+        }
+
+        let result = try await AntigravityQuotaAPI.fetchAvailableModels(
+            accessToken: "test-access-token",
+            projectId: "test-cloud-project",
+            session: session
+        )
+
+        XCTAssertEqual(result.models?.count, 1)
+        XCTAssertEqual(result.models?["gemini-3-pro"]?.quotaInfo?.remainingFraction, 0.75)
+    }
+
+    func testFetchAvailableModelsPreservesForbiddenStatus() async throws {
+        let session = makeSession()
+        defer { session.invalidateAndCancel() }
+
+        AntigravityTestURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+            let response = try XCTUnwrap(
+                HTTPURLResponse(url: url, statusCode: 403, httpVersion: nil, headerFields: nil)
+            )
+            return (response, Data())
+        }
+
+        do {
+            _ = try await AntigravityQuotaAPI.fetchAvailableModels(
+                accessToken: "test-access-token",
+                projectId: "test-cloud-project",
+                session: session
+            )
+            XCTFail("Expected an HTTP 403 error")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("403"))
+        }
+    }
+
+    func testParseAvailableModelsReadsRemainingFractionsAndResetTimes() throws {
+        let response = try JSONDecoder().decode(
+            AntigravityAvailableModelsResponse.self,
+            from: Data(#"{"models":{"gemini-3-pro":{"quotaInfo":{"remainingFraction":0.75,"resetTime":"2026-10-05T15:00:00Z"},"displayName":"Gemini 3 Pro"},"claude-opus-4-6":{"quotaInfo":{"remainingFraction":1.2}},"unavailable-model":{"displayName":"No quota"}}}"#.utf8)
+        )
+
+        let parsed = AntigravityProvider.parseAvailableModels(response.models ?? [:])
+
+        XCTAssertEqual(parsed.modelBreakdown["gemini-3-pro"], 75.0)
+        XCTAssertEqual(parsed.modelBreakdown["claude-opus-4-6"], 100.0)
+        XCTAssertNil(parsed.modelBreakdown["unavailable-model"])
+        XCTAssertNotNil(parsed.modelResetTimes["gemini-3-pro"])
+        XCTAssertNil(parsed.modelResetTimes["claude-opus-4-6"])
+    }
+
+    func testAntigravityProjectPolicyPrefersManagedProject() {
+        XCTAssertEqual(
+            AntigravityProjectPolicy.resolve(
+                managedProjectId: "managed-project",
+                projectId: "configured-project"
+            ),
+            "managed-project"
+        )
+    }
+
+    func testAntigravityProjectPolicyFallsBackToConfiguredProject() {
+        XCTAssertEqual(
+            AntigravityProjectPolicy.resolve(managedProjectId: nil, projectId: "configured-project"),
+            "configured-project"
+        )
+    }
+
+    func testAntigravityProjectPolicyUsesPluginFallbackWhenProjectIdsAreMissing() {
+        XCTAssertEqual(
+            AntigravityProjectPolicy.resolve(managedProjectId: nil, projectId: nil),
+            AntigravityProjectPolicy.fallbackProjectId
+        )
+    }
 
     func testReadVarintBoundaryValues() throws {
         try assertVarintRoundTrip(0)
