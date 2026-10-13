@@ -1158,9 +1158,8 @@ extension StatusBarController {
 
         if let sample = calibration.latestSample {
             let usageItem = NSMenuItem()
-            let usageLabel = sample.source == "Bailian CLI" ? "Official usage" : "Recorded usage"
             usageItem.view = createUsageSummaryView(
-                label: usageLabel,
+                label: "All models",
                 usagePercent: sample.percentUsed,
                 valueColor: usageColorForSummary(usagePercent: sample.percentUsed, paceInfo: nil)
             )
@@ -1198,7 +1197,7 @@ extension StatusBarController {
 
             let estimateHint = NSMenuItem()
             estimateHint.view = createDisabledLabelView(
-                text: "Estimated from the selected quota and official percentage."
+                text: "Estimated total across all models from the selected quota."
             )
             submenu.addItem(estimateHint)
 
