@@ -773,9 +773,13 @@ final class StatusBarController: NSObject {
      private func fetchMultiProviderData() async {
            debugLog("🔵 fetchMultiProviderData: started")
            logger.info("🔵 [StatusBarController] fetchMultiProviderData() started")
-           
+
+           let alibabaUsageRefreshTask = Task {
+               await AlibabaTokenPlanUsageRefresher.shared.refreshIfNeeded()
+           }
+            
            let enabledProviders = await ProviderManager.shared.getAllProviders().filter { provider in
-               isProviderEnabled(provider.identifier)
+                isProviderEnabled(provider.identifier)
            }
            debugLog("🔵 fetchMultiProviderData: enabledProviders count=\(enabledProviders.count)")
            logger.debug("🔵 [StatusBarController] enabledProviders: \(enabledProviders.map { $0.identifier.displayName }.joined(separator: ", "))")
@@ -783,6 +787,8 @@ final class StatusBarController: NSObject {
            guard !enabledProviders.isEmpty else {
                logger.info("🟡 [StatusBarController] fetchMultiProviderData: No enabled providers, skipping")
                debugLog("🟡 fetchMultiProviderData: No enabled providers, returning")
+               await alibabaUsageRefreshTask.value
+               updateMultiProviderMenu()
                return
            }
 
@@ -799,7 +805,8 @@ final class StatusBarController: NSObject {
             let fetchResult = await ProviderManager.shared.fetchAll(
                 enabledProviderIdentifiers: enabledProviderIdentifiers
             )
-           debugLog("🟢 fetchMultiProviderData: fetchAll returned \(fetchResult.results.count) results, \(fetchResult.errors.count) errors")
+            await alibabaUsageRefreshTask.value
+            debugLog("🟢 fetchMultiProviderData: fetchAll returned \(fetchResult.results.count) results, \(fetchResult.errors.count) errors")
            logger.info("🟢 [StatusBarController] fetchMultiProviderData: fetchAll() returned \(fetchResult.results.count) results, \(fetchResult.errors.count) errors")
 
            let filteredResults = fetchResult.results.filter { identifier, _ in
@@ -1851,51 +1858,26 @@ final class StatusBarController: NSObject {
          insertIndex += 1
 
           var hasQuota = false
-          let alibabaActivity = AlibabaActivityCache.get()
-          if !alibabaActivity.isEmpty {
-              hasQuota = true
-              let activityItem = NSMenuItem(title: "Alibaba Token Plan (OpenCode Stats, 30d)", action: nil, keyEquivalent: "")
-              activityItem.image = NSImage(
-                  systemSymbolName: "cloud.fill",
-                  accessibilityDescription: "Alibaba Cloud activity"
-              )
-              activityItem.tag = 999
-              let submenu = NSMenu()
-              for (model, stats) in alibabaActivity.sorted(by: { $0.key < $1.key }) {
-                  let shortModel = model.replacingOccurrences(of: "alibaba-token-plan/", with: "")
-                  let header = NSMenuItem()
-                  header.view = createDisabledLabelView(
-                      text: "\(shortModel) - \(stats.messages) msgs",
-                      font: MenuDesignToken.Typography.boldFont
-                  )
-                  submenu.addItem(header)
-                  let tokenLine = [
-                      "In: \(Self.compactTokenCount(stats.inputTokens))",
-                      "Out: \(Self.compactTokenCount(stats.outputTokens))",
-                      "Cache: \(Self.compactTokenCount(stats.cacheReadTokens))"
-                  ].joined(separator: "  ")
-                  let metric = NSMenuItem()
-                  metric.view = createDisabledLabelView(
-                      text: tokenLine,
-                      indent: MenuDesignToken.Spacing.submenuIndent
-                  )
-                  submenu.addItem(metric)
-              }
-              activityItem.submenu = submenu
-              menu.insertItem(activityItem, at: insertIndex)
-              insertIndex += 1
-          }
-
-          let alibabaCalibration = AlibabaQuotaCalibration.shared
-          if alibabaCalibration.hasSamples || alibabaCalibration.hasConfiguredQuota || !alibabaActivity.isEmpty {
-              hasQuota = true
-              let quotaItem = NSMenuItem(title: "Alibaba Quota (Manual Calibration)", action: nil, keyEquivalent: "")
-              quotaItem.image = NSImage(
-                  systemSymbolName: "target",
-                  accessibilityDescription: "Alibaba quota calibration"
-              )
-              quotaItem.tag = 999
-              quotaItem.submenu = createAlibabaQuotaSubmenu()
+           let alibabaCalibration = AlibabaQuotaCalibration.shared
+           if alibabaCalibration.hasSamples || alibabaCalibration.hasConfiguredQuota {
+               hasQuota = true
+               let alibabaIcon = NSImage(
+                   systemSymbolName: "cloud.fill",
+                   accessibilityDescription: "Alibaba Token Plan usage"
+               )
+               let quotaItem: NSMenuItem
+               if let sample = alibabaCalibration.latestSample {
+                   quotaItem = createNativeQuotaMenuItem(
+                       name: "Alibaba Token Plan",
+                       usedPercent: sample.percentUsed,
+                       icon: alibabaIcon
+                   )
+               } else {
+                   quotaItem = NSMenuItem(title: "Alibaba Token Plan", action: nil, keyEquivalent: "")
+                   quotaItem.image = alibabaIcon
+               }
+               quotaItem.tag = 999
+               quotaItem.submenu = createAlibabaQuotaSubmenu()
               menu.insertItem(quotaItem, at: insertIndex)
               insertIndex += 1
           }
@@ -3251,48 +3233,7 @@ final class StatusBarController: NSObject {
         }
     }
 
-    // MARK: - Alibaba Quota Calibration Actions
-
-    @objc func recordAlibabaQuotaSnapshot(_ sender: NSMenuItem) {
-        let calibration = AlibabaQuotaCalibration.shared
-
-        let alert = NSAlert()
-        alert.messageText = "Console Usage Percentage"
-        alert.informativeText = "Enter the used % shown on the plan page (e.g. 2.1):"
-        alert.addButton(withTitle: "Record")
-        alert.addButton(withTitle: "Cancel")
-
-        let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        inputField.placeholderString = "Used percent"
-        if let projection = calibration.currentProjection() {
-            inputField.stringValue = String(format: "%.2f", projection.usedCredits / Double(calibration.monthlyQuota) * 100)
-        }
-        alert.accessoryView = inputField
-
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let normalized = inputField.stringValue.replacingOccurrences(of: ",", with: ".")
-        guard let percent = Double(normalized), (0...100).contains(percent) else {
-            let errorAlert = NSAlert()
-            errorAlert.messageText = "Invalid Percent"
-            errorAlert.informativeText = "Enter a number between 0 and 100."
-            errorAlert.addButton(withTitle: "OK")
-            errorAlert.runModal()
-            return
-        }
-
-        calibration.recordSnapshot(percent: percent)
-        debugLog("recordAlibabaQuotaSnapshot: recorded \(percent)%")
-        menu.cancelTracking()
-        updateMultiProviderMenu()
-    }
-
-    @objc func clearAlibabaQuotaSamples(_ sender: NSMenuItem) {
-        AlibabaQuotaCalibration.shared.clearSamples()
-        menu.cancelTracking()
-        updateMultiProviderMenu()
-    }
+    // MARK: - Alibaba Token Plan Settings
 
     @objc func openAlibabaTokenPlanPage(_ sender: NSMenuItem) {
         if let url = URL(string: "https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan") {

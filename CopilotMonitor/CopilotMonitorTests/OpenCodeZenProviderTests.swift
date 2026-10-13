@@ -3,37 +3,6 @@ import XCTest
 
 final class OpenCodeZenProviderTests: XCTestCase {
 
-    func testParseAlibabaTokenPlanActivityMetricsAndProviderPrefix() {
-        let fixture = #"""
-        │ MODEL USAGE │
-        │ alibaba-token-plan/qwen3.8-max │
-        │ Messages 12 │
-        │ Input Tokens 12.5K │
-        │ Output Tokens 1.2K │
-        │ Cache Read 3M │
-        │ Cache Write 45 │
-        │ qwen/qwen3.8-max │
-        │ Messages 99 │
-        │ alibaba-token-plan/qwen3.8-flash │
-        │ Messages 4 │
-        │ Input Tokens 2K │
-        │ Output Tokens 500 │
-        │ Cache Read 0 │
-        │ Cache Write 1K │
-        """#
-        let parsed = OpenCodeZenProvider.parseAlibabaActivity(from: fixture)
-        XCTAssertEqual(parsed.count, 2)
-        XCTAssertEqual(parsed["alibaba-token-plan/qwen3.8-max"], .init(messages: 12, inputTokens: 12_500, outputTokens: 1_200, cacheReadTokens: 3_000_000, cacheWriteTokens: 45))
-        XCTAssertEqual(parsed["alibaba-token-plan/qwen3.8-flash"], .init(messages: 4, inputTokens: 2_000, outputTokens: 500, cacheReadTokens: 0, cacheWriteTokens: 1_000))
-        XCTAssertTrue(OpenCodeZenProvider.parseAlibabaActivity(from: "").isEmpty)
-        XCTAssertTrue(OpenCodeZenProvider.hasModelUsageSection(in: fixture))
-    }
-
-    func testModelUsageSectionDetectionRejectsUnrecognizedStatsOutput() {
-        XCTAssertTrue(OpenCodeZenProvider.hasModelUsageSection(in: "│ MODEL USAGE │"))
-        XCTAssertFalse(OpenCodeZenProvider.hasModelUsageSection(in: "│ TOTAL COST │"))
-    }
-
     func testParseModelCostsReadsCurrentMultilineStatsFormat() {
         let output = #"""
         ┌────────────────────────────────────────────────────────┐
@@ -218,8 +187,8 @@ final class OpenCodeZenProviderTests: XCTestCase {
     func testAlibabaQuotaProjectionFromConsoleSnapshotPair() {
         let start = Date(timeIntervalSince1970: 0)
         let samples = [
-            AlibabaQuotaSample(date: start, percentUsed: 0.94, totalTokens: 16_757_800, nonCacheTokens: 1_357_800, messages: 192),
-            AlibabaQuotaSample(date: start.addingTimeInterval(3600), percentUsed: 2.1, totalTokens: 41_266_600, nonCacheTokens: 2_266_600, messages: 261)
+            AlibabaQuotaSample(date: start, percentUsed: 0.94, resetAt: nil, source: nil),
+            AlibabaQuotaSample(date: start.addingTimeInterval(3600), percentUsed: 2.1, resetAt: nil, source: nil)
         ]
 
         let projection = AlibabaQuotaCalibration.projection(samples: samples, monthlyQuota: 45_000)
@@ -232,15 +201,61 @@ final class OpenCodeZenProviderTests: XCTestCase {
         XCTAssertEqual(result.creditsPerHour ?? 0, 522.0, accuracy: 2.0)
         XCTAssertEqual(result.creditsPerDay ?? 0, 12_528.0, accuracy: 50.0)
         XCTAssertEqual(result.daysToExhaust ?? 0, 3.52, accuracy: 0.05)
-        XCTAssertEqual(result.creditsPerMessage ?? 0, 7.57, accuracy: 0.1)
         XCTAssertEqual(result.rateWindowHours ?? 0, 1.0, accuracy: 0.01)
         XCTAssertEqual(result.sampleCount, 2)
+    }
+
+    func testParseAlibabaTokenPlanUsageJSON() throws {
+        let usage = try AlibabaTokenPlanUsage.parse(json: #"{"per1MonthPercentage":0.08015150416737334,"per1MonthResetTime":1793462400000}"#)
+
+        XCTAssertEqual(usage.percentUsed, 8.015150416737334, accuracy: 0.0000001)
+        XCTAssertEqual(usage.resetAt, Date(timeIntervalSince1970: 1_793_462_400))
+    }
+
+    func testParseAlibabaTokenPlanUsageRejectsInvalidPercentage() {
+        XCTAssertThrowsError(
+            try AlibabaTokenPlanUsage.parse(json: #"{"per1MonthPercentage":-0.1,"per1MonthResetTime":1793462400000}"#)
+        )
+        XCTAssertThrowsError(
+            try AlibabaTokenPlanUsage.parse(json: #"{"per1MonthResetTime":1793462400000}"#)
+        )
+    }
+
+    @MainActor
+    func testAlibabaQuotaCalibrationStoresOfficialResetAndSource() throws {
+        let suiteName = "AlibabaQuotaCalibrationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let calibration = AlibabaQuotaCalibration(defaults: defaults)
+        let resetAt = Date(timeIntervalSince1970: 1_793_462_400)
+        let sampledAt = Date(timeIntervalSince1970: 1_793_400_000)
+
+        calibration.recordSnapshot(
+            percent: 8.015150416737334,
+            resetAt: resetAt,
+            source: "Bailian CLI",
+            now: sampledAt
+        )
+
+        XCTAssertEqual(calibration.latestSample?.percentUsed ?? 0, 8.015150416737334, accuracy: 0.0000001)
+        XCTAssertEqual(calibration.latestSample?.resetAt, resetAt)
+        XCTAssertEqual(calibration.latestSample?.source, "Bailian CLI")
+    }
+
+    func testAlibabaQuotaSampleDecodesLegacyPersistenceWithoutConsoleMetadata() throws {
+        let legacyJSON = #"{"date":0,"percentUsed":8.0,"totalTokens":100,"nonCacheTokens":80,"messages":5}"#
+        let sample = try JSONDecoder().decode(AlibabaQuotaSample.self, from: Data(legacyJSON.utf8))
+
+        XCTAssertEqual(sample.percentUsed, 8.0)
+        XCTAssertNil(sample.resetAt)
+        XCTAssertNil(sample.source)
     }
 
     @MainActor
     func testAlibabaQuotaProjectionSingleSampleHasNoPace() {
         let samples = [
-            AlibabaQuotaSample(date: Date(timeIntervalSince1970: 0), percentUsed: 0.94, totalTokens: 1_000_000, nonCacheTokens: 500_000, messages: 10)
+            AlibabaQuotaSample(date: Date(timeIntervalSince1970: 0), percentUsed: 0.94, resetAt: nil, source: nil)
         ]
         let result = AlibabaQuotaCalibration.projection(samples: samples, monthlyQuota: 45_000)
         XCTAssertNotNil(result?.usedCredits)

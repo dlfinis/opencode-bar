@@ -1107,8 +1107,6 @@ extension StatusBarController {
         }
     }
 
-    /// Compact token count for menu rows (e.g. 1.0M, 220.0K, 845) so the
-    /// Alibaba submenu stays readable. Pure/static for testing.
     static func compactTokenCount(_ value: Int) -> String {
         let magnitude = Double(value)
         if magnitude >= 1_000_000 {
@@ -1128,7 +1126,7 @@ extension StatusBarController {
         return funded.isEmpty ? balanceInfos : funded
     }
 
-    // MARK: - Alibaba Quota Calibration Submenu
+    // MARK: - Alibaba Token Plan Submenu
 
     /// Whole-number Credits with grouping separators (e.g. "44,055"). Uses a
     /// fixed en_US locale so grouping is a comma regardless of system locale
@@ -1147,6 +1145,10 @@ extension StatusBarController {
         let quota = calibration.monthlyQuota
         let projection = calibration.currentProjection()
 
+        let cycleHeader = NSMenuItem()
+        cycleHeader.view = createHeaderView(title: "Current Cycle")
+        submenu.addItem(cycleHeader)
+
         let quotaHeader = NSMenuItem()
         quotaHeader.view = createDisabledLabelView(
             text: "Monthly quota: \(Self.alibabaQuotaCredits(Double(quota))) Cr",
@@ -1154,12 +1156,51 @@ extension StatusBarController {
         )
         submenu.addItem(quotaHeader)
 
+        if let sample = calibration.latestSample {
+            let usageItem = NSMenuItem()
+            let usageLabel = sample.source == "Bailian CLI" ? "Official usage" : "Recorded usage"
+            usageItem.view = createUsageSummaryView(
+                label: usageLabel,
+                usagePercent: sample.percentUsed,
+                valueColor: usageColorForSummary(usagePercent: sample.percentUsed, paceInfo: nil)
+            )
+            submenu.addItem(usageItem)
+
+            if let resetAt = sample.resetAt {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd HH:mm zzz"
+                formatter.timeZone = TimeZone.current
+                let resetItem = NSMenuItem()
+                resetItem.view = createDisabledLabelView(text: "Resets: \(formatter.string(from: resetAt))")
+                submenu.addItem(resetItem)
+            }
+
+            let checkedFormatter = DateFormatter()
+            checkedFormatter.dateFormat = "yyyy-MM-dd HH:mm zzz"
+            checkedFormatter.timeZone = TimeZone.current
+            let checkedItem = NSMenuItem()
+            checkedItem.view = createDisabledLabelView(
+                text: "Last checked: \(checkedFormatter.string(from: sample.date))"
+            )
+            submenu.addItem(checkedItem)
+        }
+
         if let projection {
+            let estimateHeader = NSMenuItem()
+            estimateHeader.view = createHeaderView(title: "Estimated Credits")
+            submenu.addItem(estimateHeader)
+
             let used = NSMenuItem()
             used.view = createDisabledLabelView(
-                text: "Used: \(Self.alibabaQuotaCredits(projection.usedCredits)) Cr  ·  Left: \(Self.alibabaQuotaCredits(projection.remainingCredits)) Cr"
+                text: "\(Self.alibabaQuotaCredits(projection.usedCredits)) Cr used  ·  \(Self.alibabaQuotaCredits(projection.remainingCredits)) Cr left"
             )
             submenu.addItem(used)
+
+            let estimateHint = NSMenuItem()
+            estimateHint.view = createDisabledLabelView(
+                text: "Estimated from the selected quota and official percentage."
+            )
+            submenu.addItem(estimateHint)
 
             if let perDay = projection.creditsPerDay,
                let perHour = projection.creditsPerHour {
@@ -1177,44 +1218,20 @@ extension StatusBarController {
                 )
                 submenu.addItem(exhaust)
             }
-            if let perMessage = projection.creditsPerMessage,
-               let perDayValue = projection.creditsPerDay {
-                let rate = NSMenuItem()
-                rate.view = createDisabledLabelView(
-                    text: "≈\(String(format: "%.1f", perMessage)) Cr/message  ·  ~\(Self.alibabaQuotaCredits(perDayValue / 2)) Cr/day at 0.5×"
-                )
-                submenu.addItem(rate)
-            }
             if projection.creditsPerDay == nil, projection.sampleCount < 2 {
                 let hint = NSMenuItem()
-                hint.view = createDisabledLabelView(text: "Record twice to see pace.")
+                hint.view = createDisabledLabelView(text: "Pace estimates update as new usage samples arrive.")
                 submenu.addItem(hint)
             }
         } else {
             let hint = NSMenuItem()
-            hint.view = createDisabledLabelView(text: "Read % on the plan page, then Record.")
+            hint.view = createDisabledLabelView(
+                text: "Sign in with Bailian CLI and refresh to load official usage."
+            )
             submenu.addItem(hint)
         }
 
         submenu.addItem(NSMenuItem.separator())
-
-        let recordItem = NSMenuItem(
-            title: "Record Console Usage %…",
-            action: #selector(recordAlibabaQuotaSnapshot(_:)),
-            keyEquivalent: ""
-        )
-        recordItem.target = self
-        submenu.addItem(recordItem)
-
-        if calibration.hasSamples {
-            let clearItem = NSMenuItem(
-                title: "Clear Samples",
-                action: #selector(clearAlibabaQuotaSamples(_:)),
-                keyEquivalent: ""
-            )
-            clearItem.target = self
-            submenu.addItem(clearItem)
-        }
 
         let openItem = NSMenuItem(
             title: "Open Token Plan Page",

@@ -3,23 +3,6 @@ import os.log
 
 private let logger = Logger(subsystem: "com.opencodeproviders", category: "OpenCodeZenProvider")
 
-enum AlibabaActivityCache {
-    private static let lock = NSLock()
-    private static var value: [String: OpenCodeZenProvider.AlibabaModelActivity] = [:]
-
-    static func set(_ activity: [String: OpenCodeZenProvider.AlibabaModelActivity]) {
-        lock.lock()
-        value = activity
-        lock.unlock()
-    }
-
-    static func get() -> [String: OpenCodeZenProvider.AlibabaModelActivity] {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
-}
-
 /// Personal Token Plan monthly quota tiers (Singapore, Credits per 30-day
 /// subscription cycle). Raw value is the monthly quota, so presets compare by
 /// cost value rather than by name (see the subscription preset rule).
@@ -39,31 +22,63 @@ enum AlibabaQuotaTier: Int, CaseIterable {
     }
 }
 
-/// One calibration point: the console usage percentage read at a moment plus
-/// the local OpenCode Alibaba token/message totals at that same moment. Two
-/// samples close the loop for a token→Credit and Credits/hour inference.
+struct AlibabaTokenPlanUsage: Equatable {
+    let percentUsed: Double
+    let resetAt: Date?
+
+    static func parse(json: String) throws -> AlibabaTokenPlanUsage {
+        struct Response: Decodable {
+            let per1MonthPercentage: Double
+            let per1MonthResetTime: Double?
+        }
+
+        let response = try JSONDecoder().decode(Response.self, from: Data(json.utf8))
+        guard response.per1MonthPercentage.isFinite, response.per1MonthPercentage >= 0 else {
+            throw ProviderError.decodingError("Invalid Alibaba Token Plan usage percentage")
+        }
+
+        let resetAt: Date?
+        if let milliseconds = response.per1MonthResetTime,
+           milliseconds.isFinite,
+           milliseconds > 0 {
+            resetAt = Date(timeIntervalSince1970: milliseconds / 1_000)
+        } else {
+            resetAt = nil
+        }
+
+        return AlibabaTokenPlanUsage(
+            percentUsed: response.per1MonthPercentage * 100,
+            resetAt: resetAt
+        )
+    }
+}
+
+/// One official console usage sample. Older persisted samples may still contain
+/// local token/message fields; Codable ignores those removed fields when loading.
 struct AlibabaQuotaSample: Codable, Equatable {
     let date: Date
     let percentUsed: Double
-    let totalTokens: Int
-    let nonCacheTokens: Int
-    let messages: Int
+    let resetAt: Date?
+    let source: String?
 }
 
 struct AlibabaQuotaProjection: Equatable {
     let usedCredits: Double
     let remainingCredits: Double
+    let percentUsed: Double
+    let sampledAt: Date
+    let resetAt: Date?
     let sampleCount: Int
     let creditsPerHour: Double?
     let creditsPerDay: Double?
     let daysToExhaust: Double?
-    let creditsPerMessage: Double?
     let rateWindowHours: Double?
 }
 
-/// Manual quota calibration store. The console percentage is the only real
-/// signal; Credits/day and days-to-exhaust come from the delta between the two
-/// most recent samples. Persists to `UserDefaults` like SubscriptionSettings.
+/// Stores official quota percentages and preserves prior manual samples.
+/// Credit totals are estimated from the selected plan quota; pace and
+/// days-to-exhaust use recent percentage deltas.
+@MainActor
 final class AlibabaQuotaCalibration {
     static let shared = AlibabaQuotaCalibration()
 
@@ -98,36 +113,23 @@ final class AlibabaQuotaCalibration {
     }
 
     var hasSamples: Bool { !samples.isEmpty }
+    var latestSample: AlibabaQuotaSample? { samples.max(by: { $0.date < $1.date }) }
 
-    /// Records a sample from the current Alibaba activity cache. Token/message
-    /// totals are the same 30-day basis across samples, so their difference
-    /// approximates consumption between the two console reads.
-    func recordSnapshot(percent: Double, now: Date = Date()) {
-        let activity = AlibabaActivityCache.get()
-        var totalTokens = 0
-        var nonCacheTokens = 0
-        var messages = 0
-        for model in activity.values {
-            let nonCache = model.inputTokens + model.outputTokens
-            nonCacheTokens += nonCache
-            totalTokens += nonCache + model.cacheReadTokens + model.cacheWriteTokens
-            messages += model.messages
-        }
+    /// Records an Alibaba console usage percentage and its subscription reset time.
+    func recordSnapshot(
+        percent: Double,
+        resetAt: Date? = nil,
+        source: String? = nil,
+        now: Date = Date()
+    ) {
         append(AlibabaQuotaSample(
             date: now,
             percentUsed: percent,
-            totalTokens: totalTokens,
-            nonCacheTokens: nonCacheTokens,
-            messages: messages
+            resetAt: resetAt,
+            source: source
         ))
         save()
-        debugLog("Alibaba quota snapshot recorded: \(percent)% (samples=\(samples.count))")
-    }
-
-    func clearSamples() {
-        samples = []
-        defaults.removeObject(forKey: Self.samplesKey)
-        debugLog("Alibaba quota samples cleared")
+        logger.info("Alibaba quota snapshot recorded: \(String(format: "%.2f", percent))% used (samples=\(self.samples.count))")
     }
 
     func currentProjection() -> AlibabaQuotaProjection? {
@@ -160,7 +162,6 @@ final class AlibabaQuotaCalibration {
         let remaining = max(0, quota - used)
 
         var creditsPerHour: Double?
-        var creditsPerMessage: Double?
         var rateWindowHours: Double?
 
         let sorted = samples.sorted { $0.date < $1.date }
@@ -172,10 +173,6 @@ final class AlibabaQuotaCalibration {
             if hours > 0, deltaCredits > 0 {
                 creditsPerHour = deltaCredits / hours
                 rateWindowHours = hours
-                let deltaMessages = later.messages - earlier.messages
-                if deltaMessages > 0 {
-                    creditsPerMessage = deltaCredits / Double(deltaMessages)
-                }
             }
         }
 
@@ -190,13 +187,156 @@ final class AlibabaQuotaCalibration {
         return AlibabaQuotaProjection(
             usedCredits: used,
             remainingCredits: remaining,
+            percentUsed: latest.percentUsed,
+            sampledAt: latest.date,
+            resetAt: latest.resetAt,
             sampleCount: samples.count,
             creditsPerHour: creditsPerHour,
             creditsPerDay: creditsPerDay,
             daysToExhaust: daysToExhaust,
-            creditsPerMessage: creditsPerMessage,
             rateWindowHours: rateWindowHours
         )
+    }
+}
+
+/// Polls the official Bailian CLI, which uses the user's existing console login.
+/// The endpoint returns a usage percentage and reset time, not absolute Credits.
+actor AlibabaTokenPlanUsageRefresher {
+    static let shared = AlibabaTokenPlanUsageRefresher()
+
+    private static let refreshInterval: TimeInterval = 15 * 60
+    private static let processTimeout: TimeInterval = 20
+    private static let logger = Logger(subsystem: "com.opencodeproviders", category: "AlibabaTokenPlanUsage")
+
+    private var lastAttemptAt: Date?
+
+    func refreshIfNeeded(now: Date = Date()) async {
+        if let lastAttemptAt, now.timeIntervalSince(lastAttemptAt) < Self.refreshInterval {
+            return
+        }
+        lastAttemptAt = now
+
+        guard let binary = Self.findBailianBinary() else {
+            Self.logger.info("Bailian CLI not found; skipping Alibaba Token Plan refresh")
+            return
+        }
+
+        do {
+            let output = try await Self.runUsageCommand(binary: binary)
+            let usage = try AlibabaTokenPlanUsage.parse(json: output)
+            await MainActor.run {
+                AlibabaQuotaCalibration.shared.recordSnapshot(
+                    percent: usage.percentUsed,
+                    resetAt: usage.resetAt,
+                    source: "Bailian CLI",
+                    now: now
+                )
+            }
+            Self.logger.info("Alibaba Token Plan usage refreshed: \(String(format: "%.2f", usage.percentUsed))% used")
+        } catch {
+            Self.logger.warning("Alibaba Token Plan refresh failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func findBailianBinary() -> URL? {
+        let fileManager = FileManager.default
+        let homeDirectory = fileManager.homeDirectoryForCurrentUser
+        var candidates: [String] = []
+
+        if let path = ProcessInfo.processInfo.environment["PATH"] {
+            candidates.append(contentsOf: path.split(separator: ":").map { component in
+                URL(fileURLWithPath: String(component), isDirectory: true)
+                    .appendingPathComponent("bl")
+                    .path
+            })
+        }
+
+        candidates.append(contentsOf: [
+            "/opt/homebrew/bin/bl",
+            "/usr/local/bin/bl",
+            homeDirectory.appendingPathComponent(".local/share/pnpm/bl").path,
+            homeDirectory.appendingPathComponent(".local/bin/bl").path
+        ])
+
+        for path in candidates where fileManager.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        return nil
+    }
+
+    private static func runUsageCommand(binary: URL) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            process.executableURL = binary
+            process.arguments = ["usage", "token-plan", "--output", "json"]
+
+            let outputPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = FileHandle.nullDevice
+
+            nonisolated(unsafe) var outputData = Data()
+            outputPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if !data.isEmpty {
+                    outputData.append(data)
+                }
+            }
+
+            let processHandle = ProcessTerminationHandle(process)
+            let timeout = DispatchWorkItem {
+                processHandle.terminateIfRunning()
+            }
+
+            process.terminationHandler = { terminatedProcess in
+                timeout.cancel()
+                outputPipe.fileHandleForReading.readabilityHandler = nil
+
+                let remainingData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                if !remainingData.isEmpty {
+                    outputData.append(remainingData)
+                }
+
+                guard terminatedProcess.terminationStatus == 0 else {
+                    continuation.resume(throwing: ProviderError.providerError(
+                        "Bailian CLI exited with status \(terminatedProcess.terminationStatus); check console login with `bl auth status`."
+                    ))
+                    return
+                }
+
+                guard let output = String(data: outputData, encoding: .utf8) else {
+                    continuation.resume(throwing: ProviderError.decodingError("Bailian CLI returned non-UTF-8 output"))
+                    return
+                }
+                continuation.resume(returning: output)
+            }
+
+            do {
+                try process.run()
+                DispatchQueue.global(qos: .utility).asyncAfter(
+                    deadline: .now() + processTimeout,
+                    execute: timeout
+                )
+            } catch {
+                timeout.cancel()
+                continuation.resume(throwing: ProviderError.networkError(
+                    "Failed to start Bailian CLI: \(error.localizedDescription)"
+                ))
+            }
+        }
+    }
+}
+
+private final class ProcessTerminationHandle: @unchecked Sendable {
+    private let process: Process
+
+    init(_ process: Process) {
+        self.process = process
+    }
+
+    func terminateIfRunning() {
+        if process.isRunning {
+            process.terminate()
+        }
     }
 }
 
@@ -223,17 +363,6 @@ final class OpenCodeZenProvider: ProviderProtocol {
     let identifier: ProviderIdentifier = .openCodeZen
     let type: ProviderType = .payAsYouGo
     let fetchTimeout: TimeInterval = 60.0
-    private static let alibabaStatsRefreshInterval: TimeInterval = 5 * 60
-    private var lastAlibabaStatsAttempt: Date?
-    private var cachedAlibabaActivity: [String: AlibabaModelActivity] = [:]
-
-    struct AlibabaModelActivity: Equatable {
-        var messages: Int = 0
-        var inputTokens: Int = 0
-        var outputTokens: Int = 0
-        var cacheReadTokens: Int = 0
-        var cacheWriteTokens: Int = 0
-    }
 
     /// Path to opencode CLI binary (lazily resolved)
     private lazy var opencodePath: URL? = {
@@ -388,24 +517,6 @@ final class OpenCodeZenProvider: ProviderProtocol {
             modelCosts: stats.modelCosts,
             modelMessages: stats.modelMessages
         )
-        let now = Date()
-        if lastAlibabaStatsAttempt.map({ now.timeIntervalSince($0) >= Self.alibabaStatsRefreshInterval }) ?? true {
-            lastAlibabaStatsAttempt = now
-            do {
-                let alibabaOutput = try await runOpenCodeStats(days: 30)
-                if Self.hasModelUsageSection(in: alibabaOutput) {
-                    cachedAlibabaActivity = Self.parseAlibabaActivity(from: alibabaOutput)
-                    AlibabaActivityCache.set(cachedAlibabaActivity)
-                    let modelCount = cachedAlibabaActivity.count
-                    logger.info("Alibaba local activity updated for \(modelCount) model(s) over 30 days")
-                } else {
-                    logger.warning("Alibaba local stats output has no MODEL USAGE section; preserving cached activity")
-                }
-            } catch {
-                logger.warning("Alibaba local stats collection failed: \(error.localizedDescription)")
-            }
-        }
-
         let monthlyLimit = 1000.0
         let utilization = min((displayStats.totalCost / monthlyLimit) * 100, 100)
         logger.info("OpenCode Zen: $\(String(format: "%.2f", displayStats.totalCost)) (\(String(format: "%.1f", utilization))% of $\(monthlyLimit) limit)")
@@ -428,58 +539,6 @@ final class OpenCodeZenProvider: ProviderProtocol {
             usage: .payAsYouGo(utilization: utilization, cost: displayStats.totalCost, resetsAt: nil),
             details: details
         )
-    }
-
-    static func parseAlibabaActivity(from output: String) -> [String: AlibabaModelActivity] {
-        var result: [String: AlibabaModelActivity] = [:]
-        var currentModel: String?
-        var inModelSection = false
-        for rawLine in output.components(separatedBy: .newlines) {
-            let line = rawLine.replacingOccurrences(of: #"\u{001B}\[[0-9;]*[A-Za-z]"#, with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("│") else { continue }
-            let text = trimmedTableCell(line)
-            if isStatsSectionHeader(text) {
-                inModelSection = text == "MODEL USAGE"
-                currentModel = nil
-                continue
-            }
-            guard inModelSection else { continue }
-            if text.hasPrefix("Messages") || text.hasPrefix("Input Tokens") || text.hasPrefix("Output Tokens") || text.hasPrefix("Cache Read") || text.hasPrefix("Cache Write") {
-                guard let model = currentModel, model.hasPrefix("alibaba-token-plan/"), let value = tokenCount(in: text) else { continue }
-                var stats = result[model] ?? AlibabaModelActivity()
-                if text.hasPrefix("Messages") { stats.messages = value }
-                else if text.hasPrefix("Input Tokens") { stats.inputTokens = value }
-                else if text.hasPrefix("Output Tokens") { stats.outputTokens = value }
-                else if text.hasPrefix("Cache Read") { stats.cacheReadTokens = value }
-                else { stats.cacheWriteTokens = value }
-                result[model] = stats
-            } else if !isStatsMetricLine(text) {
-                currentModel = text
-            }
-        }
-        return result
-    }
-
-    static func hasModelUsageSection(in output: String) -> Bool {
-        output.components(separatedBy: .newlines).contains { rawLine in
-            let line = rawLine.replacingOccurrences(
-                of: #"\u{001B}\[[0-9;]*[A-Za-z]"#,
-                with: "",
-                options: .regularExpression
-            ).trimmingCharacters(in: .whitespaces)
-            return line.hasPrefix("│") && trimmedTableCell(line) == "MODEL USAGE"
-        }
-    }
-
-    private static func tokenCount(in text: String) -> Int? {
-        guard let range = text.range(of: #"[0-9][0-9,.]*\s*[KkMm]?"#, options: .regularExpression) else { return nil }
-        let token = String(text[range]).replacingOccurrences(of: ",", with: "").trimmingCharacters(in: .whitespaces)
-        let suffix = token.last?.lowercased()
-        let numeric = (suffix == "k" || suffix == "m") ? String(token.dropLast()) : token
-        guard let value = Double(numeric) else { return nil }
-        let multiplier = suffix == "k" ? 1_000.0 : (suffix == "m" ? 1_000_000.0 : 1.0)
-        return Int((value * multiplier).rounded())
     }
 
     private func runOpenCodeStats(days: Int) async throws -> String {
