@@ -94,7 +94,36 @@ final class CopilotProviderTests: XCTestCase {
         XCTAssertEqual(usage.usedRequests, 0)
         XCTAssertEqual(usage.limitRequests, 0)
     }
-    
+
+    func testCopilotUsageParserRejectsUnrecognizedCookiePayload() {
+        let usage = CopilotProvider().parseUsageFromResponse(["unexpectedField": 1])
+
+        XCTAssertNil(usage)
+    }
+
+    func testCopilotUsageParserRejectsEmptyZeroQuotaCookiePayload() {
+        let usage = CopilotProvider().parseUsageFromResponse([
+            "netBilledAmount": 0.0,
+            "netQuantity": 0.0,
+            "discountQuantity": 0.0,
+            "userPremiumRequestEntitlement": 0
+        ])
+
+        XCTAssertNil(usage)
+    }
+
+    func testCopilotUsageParserKeepsValidUnusedQuota() {
+        let usage = CopilotProvider().parseUsageFromResponse([
+            "netBilledAmount": 0.0,
+            "netQuantity": 0.0,
+            "discountQuantity": 0.0,
+            "userPremiumRequestEntitlement": 300
+        ])
+
+        XCTAssertEqual(usage?.usedRequests, 0)
+        XCTAssertEqual(usage?.limitRequests, 300)
+    }
+     
     // MARK: - CopilotAuthSource Tests
 
     func testCopilotAuthSourceAllCasesExist() {
@@ -113,6 +142,67 @@ final class CopilotProviderTests: XCTestCase {
         XCTAssertEqual(CopilotAuthSource.copilotCliKeychain.description, "copilotCliKeychain")
         XCTAssertEqual(CopilotAuthSource.vscodeHosts.description, "vscodeHosts")
         XCTAssertEqual(CopilotAuthSource.vscodeApps.description, "vscodeApps")
+    }
+
+    func testCookieTokenMatchRetainsTokenUntilCookieUsageSucceeds() {
+        var tokenInfos = [
+            CopilotProvider.CopilotTokenInfo(
+                accountId: "test-account",
+                login: "test-user",
+                planInfo: nil,
+                authSource: "VS Code apps.json",
+                source: .vscodeApps
+            )
+        ]
+
+        let matched = CopilotProvider.matchTokenInfo(
+            login: "TEST-USER",
+            tokenInfos: &tokenInfos,
+            consume: false
+        )
+
+        XCTAssertNotNil(matched)
+        XCTAssertEqual(tokenInfos.count, 1, "Keep the token source when browser usage is unavailable")
+
+        _ = CopilotProvider.matchTokenInfo(
+            login: "test-user",
+            tokenInfos: &tokenInfos,
+            consume: true
+        )
+
+        XCTAssertTrue(tokenInfos.isEmpty, "Consume the token source after browser usage succeeds")
+    }
+
+    func testTokenQuotaIsPreferredOnlyWhenLimitAndRemainingAreAvailable() {
+        let missingQuota = CopilotProvider.CopilotTokenInfo(
+            accountId: "test-account",
+            login: "test-user",
+            planInfo: CopilotPlanInfo(
+                plan: "Individual",
+                quotaResetDateUTC: nil,
+                quotaLimit: nil,
+                quotaRemaining: nil,
+                userId: "test-account"
+            ),
+            authSource: "VS Code apps.json",
+            source: .vscodeApps
+        )
+        let usableQuota = CopilotProvider.CopilotTokenInfo(
+            accountId: "test-account",
+            login: "test-user",
+            planInfo: CopilotPlanInfo(
+                plan: "Individual",
+                quotaResetDateUTC: nil,
+                quotaLimit: 300,
+                quotaRemaining: 0,
+                userId: "test-account"
+            ),
+            authSource: "VS Code apps.json",
+            source: .vscodeApps
+        )
+
+        XCTAssertFalse(CopilotProvider.hasUsableTokenQuota(in: [missingQuota]))
+        XCTAssertTrue(CopilotProvider.hasUsableTokenQuota(in: [usableQuota]))
     }
 
     // MARK: - CopilotAuthSource.priority

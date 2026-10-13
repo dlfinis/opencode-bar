@@ -37,6 +37,12 @@ final class CopilotProvider: ProviderProtocol {
         let tokenAccounts = TokenManager.shared.getGitHubCopilotAccounts()
         var tokenInfos = await fetchTokenInfos(tokenAccounts)
 
+        if Self.hasUsableTokenQuota(in: tokenInfos) {
+            let tokenCandidates = tokenInfos.compactMap(buildCandidateFromToken)
+            logger.info("CopilotProvider: Using token-based quota data; skipping browser cookies")
+            return finalizeResult(candidates: tokenCandidates, cookieCandidate: nil)
+        }
+
         var candidates: [CopilotAccountCandidate] = []
         var cookieCandidate: CopilotAccountCandidate?
 
@@ -54,13 +60,27 @@ final class CopilotProvider: ProviderProtocol {
                 cachedUserEmail = login
             }
 
-            let matchedToken = matchTokenInfo(login: cookieLogin, tokenInfos: &tokenInfos)
+            // Keep the OAuth token candidate unless the cookie billing path returns a real quota.
+            let matchedToken = Self.matchTokenInfo(
+                login: cookieLogin,
+                tokenInfos: &tokenInfos,
+                consume: false
+            )
             let planInfo = matchedToken?.planInfo
 
             if let customerId = await fetchCustomerId(cookies: cookies) {
                 logger.info("CopilotProvider: Customer ID obtained - \(customerId)")
 
                 if var usage = await fetchUsageData(customerId: customerId, cookies: cookies) {
+                    // A cookie response with billing data but no quota must not hide token quota data.
+                    if matchedToken != nil, usage.limitRequests > 0 {
+                        _ = Self.matchTokenInfo(
+                            login: cookieLogin,
+                            tokenInfos: &tokenInfos,
+                            consume: true
+                        )
+                    }
+
                     if let planInfo {
                         usage = CopilotUsage(
                             netBilledAmount: usage.netBilledAmount,
@@ -142,7 +162,7 @@ final class CopilotProvider: ProviderProtocol {
 
     // MARK: - Token & Account Helpers
 
-    private struct CopilotTokenInfo {
+    struct CopilotTokenInfo {
         let accountId: String?
         let login: String?
         let planInfo: CopilotPlanInfo?
@@ -178,6 +198,16 @@ final class CopilotProvider: ProviderProtocol {
 
     private func sourcePriority(_ source: CopilotAuthSource?) -> Int {
         source?.priority ?? 0
+    }
+
+    static func hasUsableTokenQuota(in tokenInfos: [CopilotTokenInfo]) -> Bool {
+        tokenInfos.contains { info in
+            guard let limit = info.quotaLimit,
+                  info.quotaRemaining != nil else {
+                return false
+            }
+            return limit > 0
+        }
     }
 
     private func fetchTokenInfos(_ accounts: [CopilotAuthAccount]) async -> [CopilotTokenInfo] {
@@ -232,10 +262,18 @@ final class CopilotProvider: ProviderProtocol {
         return results
     }
 
-    private func matchTokenInfo(login: String?, tokenInfos: inout [CopilotTokenInfo]) -> CopilotTokenInfo? {
+    static func matchTokenInfo(
+        login: String?,
+        tokenInfos: inout [CopilotTokenInfo],
+        consume: Bool
+    ) -> CopilotTokenInfo? {
         guard let login = login, !login.isEmpty else { return nil }
         if let index = tokenInfos.firstIndex(where: { $0.login?.caseInsensitiveCompare(login) == .orderedSame }) {
-            return tokenInfos.remove(at: index)
+            let matched = tokenInfos[index]
+            if consume {
+                tokenInfos.remove(at: index)
+            }
+            return matched
         }
         return nil
     }
@@ -483,6 +521,7 @@ final class CopilotProvider: ProviderProtocol {
                 logger.info("CopilotProvider: Usage data parsed - used: \(usage.usedRequests), limit: \(usage.limitRequests)")
                 return usage
             }
+            logger.warning("CopilotProvider: Usage response contained no useful quota or billing data")
         } catch {
             logger.error("CopilotProvider: Usage fetch error - \(error.localizedDescription)")
         }
@@ -493,7 +532,7 @@ final class CopilotProvider: ProviderProtocol {
     /// Parse CopilotUsage from API response dictionary
     /// - Parameter rootDict: Raw response from API
     /// - Returns: Parsed CopilotUsage or nil if parsing fails
-    private func parseUsageFromResponse(_ rootDict: [String: Any]) -> CopilotUsage? {
+    func parseUsageFromResponse(_ rootDict: [String: Any]) -> CopilotUsage? {
         // Unwrap payload or data wrapper if present
         var dict = rootDict
         if let payload = rootDict["payload"] as? [String: Any] {
@@ -504,12 +543,34 @@ final class CopilotProvider: ProviderProtocol {
 
         logger.info("CopilotProvider: Parsing data (Keys: \(dict.keys.joined(separator: ", ")))")
 
+        let recognizedKeys = [
+            "netBilledAmount",
+            "net_billed_amount",
+            "netQuantity",
+            "net_quantity",
+            "discountQuantity",
+            "discount_quantity",
+            "userPremiumRequestEntitlement",
+            "user_premium_request_entitlement",
+            "quantity",
+            "filteredUserPremiumRequestEntitlement"
+        ]
+        guard recognizedKeys.contains(where: { dict[$0] != nil }) else {
+            logger.warning("CopilotProvider: Usage response has no recognized quota or billing fields")
+            return nil
+        }
+
         // Extract values with fallback key names
         let netBilledAmount = APIValueParser.parseDouble(from: dict, keys: ["netBilledAmount", "net_billed_amount"])
         let netQuantity = APIValueParser.parseDouble(from: dict, keys: ["netQuantity", "net_quantity"])
         let discountQuantity = APIValueParser.parseDouble(from: dict, keys: ["discountQuantity", "discount_quantity"])
         let limit = APIValueParser.parseInt(from: dict, keys: ["userPremiumRequestEntitlement", "user_premium_request_entitlement", "quantity"])
         let filteredLimit = APIValueParser.parseInt(from: dict, keys: ["filteredUserPremiumRequestEntitlement"])
+
+        guard limit > 0 || netBilledAmount != 0 || netQuantity != 0 || discountQuantity != 0 else {
+            logger.warning("CopilotProvider: Usage response contains no useful quota or billing values")
+            return nil
+        }
 
         return CopilotUsage(
             netBilledAmount: netBilledAmount,
