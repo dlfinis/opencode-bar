@@ -18,6 +18,11 @@
 	<string>2.12.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>MACOSX_DEPLOYMENT_TARGET</key>
 	<string>13.0</string>
 	<key>SUAllowsAutomaticUpdates</key>

@@ -740,7 +740,7 @@ final class StatusBarController: NSObject {
         fetchUsage()
     }
 
-    private func fetchUsage() {
+    private func fetchUsage(forceRefreshProviderIdentifiers: Set<ProviderIdentifier> = []) {
         debugLog("fetchUsage: called")
         logger.info("fetchUsage started, isFetching: \(self.isFetching)")
 
@@ -760,7 +760,9 @@ final class StatusBarController: NSObject {
         debugLog("fetchUsage: creating Task")
         Task { @MainActor in
             debugLog("fetchUsage Task: calling fetchMultiProviderData")
-            await fetchMultiProviderData()
+            await fetchMultiProviderData(
+                forceRefreshProviderIdentifiers: forceRefreshProviderIdentifiers
+            )
             debugLog("fetchUsage Task: fetchMultiProviderData completed")
             debugLog("fetchUsage Task: all done, setting isFetching=false")
             self.isFetching = false
@@ -770,7 +772,9 @@ final class StatusBarController: NSObject {
 
     // MARK: - Multi-Provider Fetch
 
-     private func fetchMultiProviderData() async {
+     private func fetchMultiProviderData(
+        forceRefreshProviderIdentifiers: Set<ProviderIdentifier> = []
+     ) async {
            debugLog("🔵 fetchMultiProviderData: started")
            logger.info("🔵 [StatusBarController] fetchMultiProviderData() started")
 
@@ -802,9 +806,10 @@ final class StatusBarController: NSObject {
             logger.info("🟡 [StatusBarController] fetchMultiProviderData: Calling ProviderManager.fetchAll()")
             debugLog("🟡 fetchMultiProviderData: calling ProviderManager.fetchAll()")
             let enabledProviderIdentifiers = Set(enabledProviders.map { $0.identifier })
-            let fetchResult = await ProviderManager.shared.fetchAll(
-                enabledProviderIdentifiers: enabledProviderIdentifiers
-            )
+             let fetchResult = await ProviderManager.shared.fetchAll(
+                 enabledProviderIdentifiers: enabledProviderIdentifiers,
+                 forceRefreshProviderIdentifiers: forceRefreshProviderIdentifiers
+             )
             await alibabaUsageRefreshTask.value
             debugLog("🟢 fetchMultiProviderData: fetchAll returned \(fetchResult.results.count) results, \(fetchResult.errors.count) errors")
            logger.info("🟢 [StatusBarController] fetchMultiProviderData: fetchAll() returned \(fetchResult.results.count) results, \(fetchResult.errors.count) errors")
@@ -1019,6 +1024,8 @@ final class StatusBarController: NSObject {
         case .kiro:
             add(usage.usagePercentage, priority: .monthly)
         case .grok:
+            add(details?.monthlyUsage, priority: .monthly)
+        case .globAI:
             add(details?.monthlyUsage, priority: .monthly)
         case .codex:
             add(
@@ -1663,7 +1670,7 @@ final class StatusBarController: NSObject {
               debugLog("updateMultiProviderMenu: providers=[\(providerNames)]")
           }
 
-          guard !providerResults.isEmpty else {
+          guard !providerResults.isEmpty || isProviderEnabled(.globAI) else {
               debugLog("updateMultiProviderMenu: no data, returning")
               recentChangeCandidate = nil
               updateStatusBarDisplayMenuState()
@@ -1689,12 +1696,24 @@ final class StatusBarController: NSObject {
 
          var hasPayAsYouGo = false
 
-            let payAsYouGoOrder: [ProviderIdentifier] = [.openRouter, .openCodeZen, .deepSeek]
+            let payAsYouGoOrder: [ProviderIdentifier] = [.openRouter, .globAI, .openCodeZen, .deepSeek]
             for identifier in payAsYouGoOrder {
                 guard isProviderEnabled(identifier) else { continue }
 
                 let result = providerResults[identifier]
                 let errorMessage = lastProviderErrors[identifier]
+
+                if identifier == .globAI {
+                    hasPayAsYouGo = true
+                    let item = createGlobAIMenuItem(
+                        result: result,
+                        errorMessage: errorMessage,
+                        isLoading: loadingProviders.contains(identifier)
+                    )
+                    menu.insertItem(item, at: insertIndex)
+                    insertIndex += 1
+                    continue
+                }
 
                 if let errorMessage, shouldDisplayErrorStateEvenWithResult(errorMessage) {
                     hasPayAsYouGo = true
@@ -2548,6 +2567,109 @@ final class StatusBarController: NSObject {
         return item
     }
 
+    private func createGlobAIMenuItem(
+        result: ProviderResult?,
+        errorMessage: String?,
+        isLoading: Bool
+    ) -> NSMenuItem {
+        let title: String
+        if let cost = result?.usage.cost {
+            title = String(format: "Glob.AI ($%.2f)", cost)
+        } else {
+            if isLoading {
+                title = "Glob.AI (Loading...)"
+            } else if errorMessage != nil {
+                title = "Glob.AI (Bridge unavailable)"
+            } else {
+                title = "Glob.AI"
+            }
+        }
+
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.image = iconForProvider(.globAI)
+        item.tag = 999
+        let details = result?.details
+        item.submenu = createGlobAIDetailSubmenu(
+            usedUSD: details?.monthlyCost ?? result?.usage.cost,
+            hardLimitUSD: details?.limit,
+            remainingUSD: details?.limitRemaining,
+            updatedAt: details?.resetPeriod,
+            errorMessage: errorMessage
+        )
+        return item
+    }
+
+    func createGlobAIDetailSubmenu(
+        usedUSD: Double?,
+        hardLimitUSD: Double?,
+        remainingUSD: Double?,
+        updatedAt: String?,
+        errorMessage: String?
+    ) -> NSMenu {
+        let submenu = NSMenu()
+
+        if let usedUSD, let hardLimitUSD, hardLimitUSD > 0 {
+            let usedPercent = usedUSD / hardLimitUSD * 100
+            let remaining = remainingUSD ?? (hardLimitUSD - usedUSD)
+            addGlobAIDisabledMenuRow(
+                String(format: "Project usage: $%.2f / $%.2f", usedUSD, hardLimitUSD),
+                to: submenu
+            )
+            addGlobAIDisabledMenuRow(String(format: "Limit used: %.2f%%", usedPercent), to: submenu)
+            addGlobAIDisabledMenuRow(String(format: "Limit remaining: $%.2f", remaining), to: submenu)
+            if let updatedAt {
+                addGlobAIDisabledMenuRow("Last quota update: \(updatedAt)", to: submenu)
+            }
+
+            let warningLevel = GlobAIQuotaSnapshot.warningLevel(used: usedUSD, limit: hardLimitUSD)
+            if warningLevel == 90 {
+                addGlobAIWarningRow("Quota warning: at least 90% used", to: submenu)
+            } else if warningLevel == 75 {
+                addGlobAIWarningRow("Quota warning: at least 75% used", to: submenu)
+            }
+        } else if let errorMessage {
+            addGlobAIDisabledMenuRow("Project quota unavailable: \(errorMessage)", to: submenu, multiline: true)
+            addGlobAIDisabledMenuRow(
+                "Start the bridge with ~/.agents/globai/bridge.sh start, then select Refresh.",
+                to: submenu,
+                multiline: true
+            )
+        } else if isProviderEnabled(.globAI) {
+            addGlobAIDisabledMenuRow("Waiting for the first Glob.AI project quota snapshot.", to: submenu)
+        }
+
+        if usedUSD != nil, let errorMessage {
+            submenu.addItem(NSMenuItem.separator())
+            addGlobAIDisabledMenuRow("Refresh status: \(errorMessage)", to: submenu, multiline: true)
+        }
+
+        addGlobAIDisabledMenuRow(
+            "Quota source: Glob.AI OS bridge (localhost:8787)",
+            to: submenu,
+            icon: NSImage(systemSymbolName: "network", accessibilityDescription: "Quota source")
+        )
+        return submenu
+    }
+
+    private func addGlobAIDisabledMenuRow(
+        _ text: String,
+        to menu: NSMenu,
+        icon: NSImage? = nil,
+        multiline: Bool = false
+    ) {
+        let item = NSMenuItem()
+        item.view = createDisabledLabelView(text: text, icon: icon, multiline: multiline)
+        menu.addItem(item)
+    }
+
+    private func addGlobAIWarningRow(_ text: String, to menu: NSMenu) {
+        addGlobAIDisabledMenuRow(
+            text,
+            to: menu,
+            icon: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Quota warning")
+        )
+    }
+
     private func multiAccountBaseName(for identifier: ProviderIdentifier) -> String {
         switch identifier {
         case .codex:
@@ -3158,6 +3280,8 @@ final class StatusBarController: NSObject {
             image = NSImage(named: "BraveSearchIcon")
         case .deepSeek:
             image = NSImage(systemSymbolName: identifier.iconName, accessibilityDescription: identifier.displayName)
+        case .globAI:
+            image = NSImage(systemSymbolName: identifier.iconName, accessibilityDescription: identifier.displayName)
         }
 
          // Keep consistent icon sizing and make Gemini slightly larger.
@@ -3421,7 +3545,7 @@ final class StatusBarController: NSObject {
     @objc private func refreshClicked() {
         logger.info("⌨️ [Keyboard] ⌘R Refresh triggered")
         debugLog("⌨️ refreshClicked: ⌘R shortcut activated")
-        fetchUsage()
+        fetchUsage(forceRefreshProviderIdentifiers: [.globAI])
     }
 
     @objc private func openBillingClicked() {

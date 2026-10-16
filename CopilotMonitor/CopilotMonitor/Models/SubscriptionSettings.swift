@@ -196,6 +196,7 @@ struct ProviderSubscriptionPresets {
     static let tavilySearch: [SubscriptionPreset] = []
     static let braveSearch: [SubscriptionPreset] = []
     static let deepSeek: [SubscriptionPreset] = []
+    static let globAI: [SubscriptionPreset] = []
 
     static func presets(for provider: ProviderIdentifier) -> [SubscriptionPreset] {
         switch provider {
@@ -243,6 +244,8 @@ struct ProviderSubscriptionPresets {
             return chutes
         case .deepSeek:
             return deepSeek
+        case .globAI:
+            return globAI
         }
     }
 }

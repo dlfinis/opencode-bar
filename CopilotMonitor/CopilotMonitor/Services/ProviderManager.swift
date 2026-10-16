@@ -47,7 +47,8 @@ actor ProviderManager {
             SyntheticProvider(),
             TavilySearchProvider(),
             BraveSearchProvider(),
-            DeepSeekProvider()
+            DeepSeekProvider(),
+            GlobAIProvider()
         ]
     }
 
@@ -58,6 +59,7 @@ actor ProviderManager {
     private var cachedResults: [ProviderIdentifier: ProviderResult] = [:]
     private var lastNetworkFetchAt: [ProviderIdentifier: Date] = [:]
     private var lastProviderErrors: [ProviderIdentifier: String] = [:]
+    private var pausedProvidersUntilManualRefresh: Set<ProviderIdentifier> = []
     private var inFlightFetches: [ProviderIdentifier: InFlightProviderFetch] = [:]
 
     private struct InFlightProviderFetch {
@@ -107,7 +109,10 @@ actor ProviderManager {
     /// Fetches usage data from all registered providers in parallel
     /// - Returns: FetchAllResult containing both successful results and error messages
     /// - Note: Returns partial results if some providers fail (graceful degradation)
-    func fetchAll(enabledProviderIdentifiers: Set<ProviderIdentifier>? = nil) async -> FetchAllResult {
+    func fetchAll(
+        enabledProviderIdentifiers: Set<ProviderIdentifier>? = nil,
+        forceRefreshProviderIdentifiers: Set<ProviderIdentifier> = []
+    ) async -> FetchAllResult {
         let providersToFetch = enabledProviderIdentifiers.map { identifiers in
             providers.filter { identifiers.contains($0.identifier) }
         } ?? providers
@@ -125,13 +130,17 @@ actor ProviderManager {
             for provider in providersToFetch {
                 logger.debug("🟡 [ProviderManager] Adding fetch task for \(provider.identifier.displayName)")
                 self.debugLog("🟡 Adding fetch task for \(provider.identifier.displayName)")
+                let forceRefresh = forceRefreshProviderIdentifiers.contains(provider.identifier)
                 
                 group.addTask { [weak self] in
                     guard let self = self else {
                         logger.warning("🔴 [ProviderManager] Self deallocated for \(provider.identifier.displayName)")
                         return (provider.identifier, nil, "Self deallocated")
                     }
-                    return await self.fetchProvider(provider)
+                    return await self.fetchProvider(
+                        provider,
+                        forceRefresh: forceRefresh
+                    )
                 }
             }
 
@@ -228,7 +237,10 @@ actor ProviderManager {
     /// - Parameter provider: The provider to fetch from
     /// - Returns: ProviderResult data
     /// - Throws: ProviderError or timeout error
-    private func fetchProvider(_ provider: ProviderProtocol) async -> (ProviderIdentifier, ProviderResult?, String?) {
+    private func fetchProvider(
+        _ provider: ProviderProtocol,
+        forceRefresh: Bool
+    ) async -> (ProviderIdentifier, ProviderResult?, String?) {
         let identifier = provider.identifier
 
         if let inFlight = inFlightFetches[identifier] {
@@ -237,7 +249,20 @@ actor ProviderManager {
             return await resolveFetch(provider: provider, inFlight: inFlight)
         }
 
-        if let throttled = throttledFetchOutcome(for: provider) {
+        if pausedProvidersUntilManualRefresh.contains(identifier), !forceRefresh {
+            let message = pausedRefreshMessage(for: identifier)
+            logger.info("🟡 [ProviderManager] Skipping automatic fetch for \(provider.identifier.displayName); waiting for manual refresh")
+            debugLog("🟡 Skipping automatic fetch for \(provider.identifier.displayName); waiting for manual refresh")
+            return (identifier, cachedResults[identifier], message)
+        }
+
+        if forceRefresh {
+            pausedProvidersUntilManualRefresh.remove(identifier)
+            logger.info("🔄 [ProviderManager] Explicit refresh is retrying \(provider.identifier.displayName)")
+            debugLog("🔄 Explicit refresh is retrying \(provider.identifier.displayName)")
+        }
+
+        if !forceRefresh, let throttled = throttledFetchOutcome(for: provider) {
             if throttled.result != nil {
                 logger.info("🟡 [ProviderManager] Skipping \(provider.identifier.displayName) network fetch due to minimum interval")
                 debugLog("🟡 Skipping \(provider.identifier.displayName) network fetch due to minimum interval")
@@ -272,6 +297,7 @@ actor ProviderManager {
             let result = try await inFlight.task.value
             cachedResults[identifier] = result
             lastProviderErrors[identifier] = nil
+            pausedProvidersUntilManualRefresh.remove(identifier)
             clearInFlightFetch(identifier: identifier, token: inFlight.token)
 
             logger.info("🟢 [ProviderManager] ✓ \(provider.identifier.displayName) fetch succeeded")
@@ -283,20 +309,42 @@ actor ProviderManager {
             lastProviderErrors[identifier] = errorMessage
             clearInFlightFetch(identifier: identifier, token: inFlight.token)
 
+            if provider.shouldPauseAutomaticRefresh(after: error) {
+                pausedProvidersUntilManualRefresh.insert(identifier)
+            }
+
             logger.error("🔴 [ProviderManager] ✗ \(provider.identifier.displayName) fetch failed: \(errorMessage)")
             debugLog("🔴 ✗ \(provider.identifier.displayName) fetch failed: \(errorMessage)")
 
-            let cached = cachedResults[identifier]
+            let cached: ProviderResult?
+            if provider.allowsCachedResultOnFetchFailure {
+                cached = cachedResults[identifier]
+            } else {
+                cached = nil
+                cachedResults[identifier] = nil
+            }
+
             if cached != nil {
                 logger.warning("🟡 [ProviderManager] Using cached value for \(provider.identifier.displayName)")
                 debugLog("🟡 Using cached value for \(provider.identifier.displayName)")
+            } else if !provider.allowsCachedResultOnFetchFailure {
+                logger.warning("🟡 [ProviderManager] Discarded cached value for \(provider.identifier.displayName) after a failed fetch")
+                debugLog("🟡 Discarded cached value for \(provider.identifier.displayName) after a failed fetch")
             } else {
                 logger.warning("🔴 [ProviderManager] No cached value available for \(provider.identifier.displayName)")
                 debugLog("🔴 No cached value available for \(provider.identifier.displayName)")
             }
 
-            return (identifier, cached, errorMessage)
+            let surfacedError = pausedProvidersUntilManualRefresh.contains(identifier)
+                ? "\(errorMessage) Automatic retries are paused until you select Refresh."
+                : errorMessage
+            return (identifier, cached, surfacedError)
         }
+    }
+
+    private func pausedRefreshMessage(for identifier: ProviderIdentifier) -> String {
+        let lastError = lastProviderErrors[identifier] ?? "The provider connection is unavailable."
+        return "\(lastError) Automatic retries are paused until you select Refresh."
     }
 
     private func clearInFlightFetch(identifier: ProviderIdentifier, token: UUID) {
@@ -319,7 +367,9 @@ actor ProviderManager {
         }
 
         let remaining = minimumInterval - elapsed
-        let cached = cachedResults[provider.identifier]
+        let cached = provider.allowsCachedResultOnFetchFailure
+            ? cachedResults[provider.identifier]
+            : nil
         let lastErrorMessage = lastProviderErrors[provider.identifier]
 
         if let lastErrorMessage, isRateLimitedError(lastErrorMessage) {

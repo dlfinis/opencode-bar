@@ -103,6 +103,15 @@ extension StatusBarController {
                 submenu.addItem(item)
             }
 
+        case .globAI:
+            return createGlobAIDetailSubmenu(
+                usedUSD: details.monthlyCost,
+                hardLimitUSD: details.limit,
+                remainingUSD: details.limitRemaining,
+                updatedAt: details.resetPeriod,
+                errorMessage: nil
+            )
+
         case .openCodeZen:
             if let avg = details.avgCostPerDay {
                 let item = NSMenuItem()

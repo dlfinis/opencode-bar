@@ -32,6 +32,7 @@ enum ProviderIdentifier: String, CaseIterable {
     case tavilySearch = "tavily_search"
     case braveSearch = "brave_search"
     case deepSeek = "deepseek"
+    case globAI = "glob_ai"
 
     var displayName: String {
         switch self {
@@ -79,6 +80,8 @@ enum ProviderIdentifier: String, CaseIterable {
             return "Brave Search"
         case .deepSeek:
             return "DeepSeek"
+        case .globAI:
+            return "Glob.AI"
         }
     }
 
@@ -128,6 +131,8 @@ enum ProviderIdentifier: String, CaseIterable {
             return "Brave"
         case .deepSeek:
             return "DeepSeek"
+        case .globAI:
+            return "Glob.AI"
         }
     }
 
@@ -177,6 +182,8 @@ enum ProviderIdentifier: String, CaseIterable {
             return "BraveSearchIcon"
         case .deepSeek:
             return "network"
+        case .globAI:
+            return "g.square.fill"
         }
     }
 }
@@ -195,6 +202,12 @@ protocol ProviderProtocol: AnyObject {
     /// Minimum interval between network fetches for this provider (default: no throttling)
     var minimumFetchInterval: TimeInterval { get }
 
+    /// Whether a failed fetch may return the last successful value instead.
+    var allowsCachedResultOnFetchFailure: Bool { get }
+
+    /// Whether a failed fetch should pause automatic retries until an explicit refresh.
+    func shouldPauseAutomaticRefresh(after error: Error) -> Bool
+
     /// Fetches current usage data from the provider
     /// - Returns: ProviderResult containing usage and optional detailed information
     /// - Throws: ProviderError if fetch fails
@@ -204,6 +217,8 @@ protocol ProviderProtocol: AnyObject {
 extension ProviderProtocol {
     var fetchTimeout: TimeInterval { 10.0 }
     var minimumFetchInterval: TimeInterval { 0 }
+    var allowsCachedResultOnFetchFailure: Bool { true }
+    func shouldPauseAutomaticRefresh(after error: Error) -> Bool { false }
 }
 
 /// Errors that can occur during provider operations

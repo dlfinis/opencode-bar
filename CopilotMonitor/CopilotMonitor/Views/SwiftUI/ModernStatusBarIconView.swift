@@ -153,6 +153,7 @@ struct SwiftUIProviderAlertView: View {
         case .synthetic: return "diamond"
         case .chutes: return "c.circle"
         case .tavilySearch, .braveSearch, .minimaxCodingPlan, .deepSeek: return nil
+        case .globAI: return "g.square.fill"
         }
     }
 }
