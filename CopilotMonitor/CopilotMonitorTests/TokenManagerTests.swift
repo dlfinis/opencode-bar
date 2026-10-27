@@ -570,6 +570,48 @@ final class TokenManagerTests: XCTestCase {
         XCTAssertEqual(account.idToken, "id-token")
     }
 
+    func testDedupeOpenAIAccountsUsesFreshCodexAuthTokenWhenOpenCodeAuthIsExpired() throws {
+        let expiredOpenCodeAccount = OpenAIAuthAccount(
+            accessToken: "expired-opencode-token",
+            accountId: "chatgpt-account-id",
+            externalUsageAccountId: nil,
+            email: "user@example.com",
+            authSource: "/Users/example/.local/share/opencode/auth.json",
+            sourceLabels: ["OpenCode"],
+            source: .opencodeAuth,
+            credentialType: .oauthBearer,
+            refreshToken: "consumed-refresh-token",
+            expiresAt: Date(timeIntervalSince1970: 1_770_000_000),
+            idToken: "expired-id-token"
+        )
+        let validCodexAccount = OpenAIAuthAccount(
+            accessToken: "valid-codex-token",
+            accountId: "chatgpt-account-id",
+            externalUsageAccountId: nil,
+            email: "user@example.com",
+            authSource: "/Users/example/.codex/auth.json",
+            sourceLabels: ["Codex"],
+            source: .codexAuth,
+            credentialType: .oauthBearer,
+            refreshToken: "valid-refresh-token",
+            expiresAt: Date(timeIntervalSinceNow: 3_600),
+            idToken: "valid-id-token"
+        )
+
+        let accounts = TokenManager.shared.dedupeOpenAIAccounts([expiredOpenCodeAccount, validCodexAccount])
+        let account = try XCTUnwrap(accounts.first)
+
+        XCTAssertEqual(accounts.count, 1)
+        // Fresh token from lower-priority source wins over expired high-priority token.
+        XCTAssertEqual(account.accessToken, "valid-codex-token")
+        XCTAssertEqual(account.refreshToken, "valid-refresh-token")
+        XCTAssertEqual(account.idToken, "valid-id-token")
+        // Identity and label stay with the primary (OpenCode) source.
+        XCTAssertEqual(account.accountId, "chatgpt-account-id")
+        XCTAssertEqual(account.source, .opencodeAuth)
+        XCTAssertEqual(account.authSource, "/Users/example/.local/share/opencode/auth.json")
+    }
+
     func testCodexProviderUsesChatGPTAccountIDForCodexLBInExternalMode() {
         let provider = CodexProvider()
         let account = OpenAIAuthAccount(

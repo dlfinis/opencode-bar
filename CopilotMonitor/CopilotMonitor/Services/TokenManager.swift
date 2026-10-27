@@ -831,10 +831,12 @@ private struct OpenAIAccessTokenPayload: Decodable {
 
     let auth: AuthClaims?
     let profile: ProfileClaims?
+    let exp: Double?
 
     enum CodingKeys: String, CodingKey {
         case auth = "https://api.openai.com/auth"
         case profile = "https://api.openai.com/profile"
+        case exp
     }
 }
 
@@ -3791,7 +3793,10 @@ final class TokenManager: @unchecked Sendable {
                     authSource: authSource,
                     sourceLabels: [openAISourceLabel(for: .opencodeAuth)],
                     source: .opencodeAuth,
-                    credentialType: .oauthBearer
+                    credentialType: .oauthBearer,
+                    refreshToken: normalizedNonEmpty(auth.openai?.refresh),
+                    expiresAt: auth.openai.flatMap { dateFromEpoch($0.expires) },
+                    idToken: normalizedNonEmpty(auth.openai?.idToken)
                 )
             )
         }
@@ -3839,6 +3844,8 @@ final class TokenManager: @unchecked Sendable {
                 .path
             let idTokenPayload = decodeOpenAIIDTokenPayload(codexAuth.tokens?.idToken)
             let codexEmail = normalizedNonEmpty(idTokenPayload?.email)
+            let accessTokenPayload = decodeOpenAIAccessTokenPayload(access)
+            let codexExpiresAt = accessTokenPayload?.exp.map { Date(timeIntervalSince1970: $0) }
             accounts.append(
                 OpenAIAuthAccount(
                     accessToken: access,
@@ -3848,7 +3855,10 @@ final class TokenManager: @unchecked Sendable {
                     authSource: authSource,
                     sourceLabels: [openAISourceLabel(for: .codexAuth)],
                     source: .codexAuth,
-                    credentialType: .oauthBearer
+                    credentialType: .oauthBearer,
+                    refreshToken: normalizedNonEmpty(codexAuth.tokens?.refreshToken),
+                    expiresAt: codexExpiresAt,
+                    idToken: normalizedNonEmpty(codexAuth.tokens?.idToken)
                 )
             )
         }
