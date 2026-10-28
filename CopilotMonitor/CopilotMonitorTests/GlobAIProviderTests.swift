@@ -8,7 +8,7 @@ final class GlobAIProviderTests: XCTestCase {
             let url = try XCTUnwrap(request.url)
             XCTAssertEqual(url.host, "127.0.0.1")
             XCTAssertEqual(url.port, 8787)
-            XCTAssertEqual(url.path, "/health")
+            XCTAssertTrue(["/health", "/quota"].contains(url.path), "Unexpected bridge path \(url.path)")
             XCTAssertEqual(request.httpMethod, "GET")
             XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
 
@@ -47,7 +47,7 @@ final class GlobAIProviderTests: XCTestCase {
 
     func testFetchFallsBackToOnDemandQuotaAfterBridgeRestart() async throws {
         let healthWithoutQuota = Data(
-            #"{"ok":true,"heartbeat":{"cookieAlive":true},"credentials":{"capturedAt":"2026-10-27T15:53:45.233Z","jwt":{"expiresAt":"2026-10-28T15:53:39.000Z","remainingMin":1365}},"quota":{"status":"not refreshed automatically; call GET /quota when needed"}}"#.utf8
+            #"{"ok":true,"heartbeat":{"cookieAlive":true,"lastBeat":"2026-10-27T23:47:03.090Z"},"credentials":{"jwt":{"expiresAt":"2026-10-28T15:53:39.000Z","remainingMin":1365}},"quota":{"status":"not refreshed automatically; call GET /quota when needed"}}"#.utf8
         )
         let onDemandQuota = Data(
             #"{"ok":true,"quota":{"usedUsd":2.9655,"hardLimitUsd":50,"softLimitUsd":40,"remainingUsd":47.03,"pct":5.93,"updatedAt":"2026-10-27T17:08:38.789Z"}}"#.utf8
@@ -71,17 +71,17 @@ final class GlobAIProviderTests: XCTestCase {
 
         let result = try await provider.fetch()
 
-        XCTAssertEqual(requestPaths.recorded(), ["/health", "/quota"])
+        XCTAssertEqual(requestPaths.recorded().sorted(), ["/health", "/quota"])
         XCTAssertEqual(result.usage.cost ?? -1, 2.9655, accuracy: 0.000001)
         XCTAssertEqual(result.details?.limit ?? -1, 50, accuracy: 0.000000001)
         // Token expiry comes from the health payload even when quota came from /quota.
         XCTAssertNotNil(result.details?.tokenExpiresAt)
-        XCTAssertNotNil(result.details?.sessionCapturedAt)
+        XCTAssertNotNil(result.details?.sessionVerifiedAt)
     }
 
     func testDecodeHealthSnapshotReadsSessionTokenExpiry() throws {
         let data = Data(
-            #"{"ok":true,"credentials":{"capturedAt":"2026-10-27T15:53:45.233Z","jwt":{"expiresAt":"2026-10-28T15:53:39.000Z","remainingMin":1365}},"heartbeat":{"cookieAlive":true},"quota":{"status":"not refreshed automatically; call GET /quota when needed"}}"#.utf8
+            #"{"ok":true,"credentials":{"jwt":{"expiresAt":"2026-10-28T15:53:39.000Z","remainingMin":1365}},"heartbeat":{"cookieAlive":true,"lastBeat":"2026-10-27T23:47:03.090Z"},"quota":{"status":"not refreshed automatically; call GET /quota when needed"}}"#.utf8
         )
 
         let health = try GlobAIProvider.decodeHealthSnapshot(from: data)
@@ -89,27 +89,18 @@ final class GlobAIProviderTests: XCTestCase {
         let expiresAt = try XCTUnwrap(health.tokenExpiresAt)
         let expected = try XCTUnwrap(Self.parseISOUTC("2026-10-28T15:53:39.000Z"))
         XCTAssertEqual(expiresAt.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 1)
-        let capturedAt = try XCTUnwrap(health.sessionCapturedAt)
-        let expectedCapture = try XCTUnwrap(Self.parseISOUTC("2026-10-27T15:53:45.233Z"))
-        XCTAssertEqual(capturedAt.timeIntervalSince1970, expectedCapture.timeIntervalSince1970, accuracy: 1)
+        let verifiedAt = try XCTUnwrap(health.sessionVerifiedAt)
+        let expectedBeat = try XCTUnwrap(Self.parseISOUTC("2026-10-27T23:47:03.090Z"))
+        XCTAssertEqual(verifiedAt.timeIntervalSince1970, expectedBeat.timeIntervalSince1970, accuracy: 1)
     }
 
-    func testSessionAgeLabelFollowsDurationRules() {
+    func testSessionVerifiedLabelFollowsDurationRules() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-        XCTAssertNil(GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: nil, now: now))
-        XCTAssertEqual(GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: now.addingTimeInterval(-43 * 60), now: now), "Session: 43m old")
-        XCTAssertEqual(GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: now.addingTimeInterval(-72 * 60), now: now), "Session: 1h 12m old")
-        XCTAssertEqual(GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: now.addingTimeInterval(-51 * 3600), now: now), "Session: 2d 3h old")
-    }
-
-    func testSessionStalenessUsesMeasuredCookieLifetime() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
-
-        XCTAssertFalse(GlobAIQuotaSnapshot.isSessionStale(capturedAt: nil, now: now))
-        XCTAssertFalse(GlobAIQuotaSnapshot.isSessionStale(capturedAt: now.addingTimeInterval(-49 * 60), now: now))
-        XCTAssertTrue(GlobAIQuotaSnapshot.isSessionStale(capturedAt: now.addingTimeInterval(-51 * 60), now: now))
-        XCTAssertEqual(GlobAIQuotaSnapshot.sessionStaleAgeMinutes, 50)
+        XCTAssertEqual(GlobAIQuotaSnapshot.sessionVerifiedLabel(verifiedAt: nil, now: now), "Session: not verified yet")
+        XCTAssertEqual(GlobAIQuotaSnapshot.sessionVerifiedLabel(verifiedAt: now.addingTimeInterval(-4 * 60), now: now), "Session: verified 4m ago")
+        XCTAssertEqual(GlobAIQuotaSnapshot.sessionVerifiedLabel(verifiedAt: now.addingTimeInterval(-72 * 60), now: now), "Session: verified 1h 12m ago")
+        XCTAssertEqual(GlobAIQuotaSnapshot.sessionVerifiedLabel(verifiedAt: now.addingTimeInterval(-51 * 3600), now: now), "Session: verified 2d 3h ago")
     }
 
     func testTokenExpiryLabelFollowsDurationRules() {
@@ -157,7 +148,8 @@ final class GlobAIProviderTests: XCTestCase {
         XCTAssertTrue(OpenRouterProvider().allowsCachedResultOnFetchFailure)
         XCTAssertTrue(GlobAIProvider().allowsCachedResultOnFetchFailure)
 
-        let statusSequence = ResponseStatusSequence([200, 503, 200])
+        // Each fetch issues two bridge requests (/health and /quota in parallel).
+        let statusSequence = ResponseStatusSequence([200, 200, 503, 503, 200, 200])
         let provider = GlobAIProvider(dataRequest: { request in
             let url = try XCTUnwrap(request.url)
             let statusCode = statusSequence.next()
@@ -182,12 +174,12 @@ final class GlobAIProviderTests: XCTestCase {
         let automaticFetch = await manager.fetchAll()
         XCTAssertEqual(automaticFetch.results[.globAI]?.usage.cost ?? -1, 0.0125, accuracy: 0.000000001)
         XCTAssertTrue(automaticFetch.errors[.globAI]?.contains("paused until you select Refresh") == true)
-        XCTAssertEqual(statusSequence.requestCount(), 2)
+        XCTAssertEqual(statusSequence.requestCount(), 4)
 
         let manualRefresh = await manager.fetchAll(forceRefreshProviderIdentifiers: [.globAI])
         XCTAssertEqual(manualRefresh.results[.globAI]?.usage.cost ?? -1, 0.0125, accuracy: 0.000000001)
         XCTAssertNil(manualRefresh.errors[.globAI])
-        XCTAssertEqual(statusSequence.requestCount(), 3)
+        XCTAssertEqual(statusSequence.requestCount(), 6)
     }
 
     func testDecodeReadsTheBridgeQuotaAndRejectsInvalidAmounts() throws {

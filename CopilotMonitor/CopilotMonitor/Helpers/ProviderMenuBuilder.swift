@@ -110,7 +110,7 @@ extension StatusBarController {
                 remainingUSD: details.limitRemaining,
                 updatedAt: details.resetPeriod,
                 tokenExpiresAt: details.tokenExpiresAt,
-                sessionCapturedAt: details.sessionCapturedAt,
+                sessionVerifiedAt: details.sessionVerifiedAt,
                 errorMessage: nil
             )
 

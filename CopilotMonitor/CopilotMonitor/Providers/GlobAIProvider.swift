@@ -10,8 +10,9 @@ struct GlobAIQuotaSnapshot: Equatable {
     let usagePercentage: Double
     let updatedAt: Date?
     let tokenExpiresAt: Date?
-    /// When the freshest bridge credential capture (ALB session cookie) was read.
-    let sessionCapturedAt: Date?
+    /// When the bridge last verified the platform session (result of the most
+    /// recent platform call, conversation or quota measurement alike).
+    let sessionVerifiedAt: Date?
 
     init(
         usedUSD: Double,
@@ -20,7 +21,7 @@ struct GlobAIQuotaSnapshot: Equatable {
         usagePercentage: Double,
         updatedAt: Date?,
         tokenExpiresAt: Date? = nil,
-        sessionCapturedAt: Date? = nil
+        sessionVerifiedAt: Date? = nil
     ) {
         self.usedUSD = usedUSD
         self.hardLimitUSD = hardLimitUSD
@@ -28,7 +29,7 @@ struct GlobAIQuotaSnapshot: Equatable {
         self.usagePercentage = usagePercentage
         self.updatedAt = updatedAt
         self.tokenExpiresAt = tokenExpiresAt
-        self.sessionCapturedAt = sessionCapturedAt
+        self.sessionVerifiedAt = sessionVerifiedAt
     }
 
     var updatedAtLabel: String? {
@@ -63,35 +64,25 @@ struct GlobAIQuotaSnapshot: Equatable {
         return "Bearer expires in \(minutes)m"
     }
 
-    /// The platform ALB session cookie (`AWSVAAuthSessionCookie`) is the actual
-    /// short-lived credential (~1h measured; see globai PLAYBOOK). It carries no
-    /// client-readable expiry, so the bridge reports when the freshest capture
-    /// was taken. A capture older than the measured cookie lifetime means the
-    /// browser renewal chain stopped and the session is likely dead.
-    static let sessionStaleAgeMinutes = 50
-
-    /// Age of the freshest session capture, or nil when unknown.
-    static func sessionAgeLabel(capturedAt: Date?, now: Date = Date()) -> String? {
-        guard let capturedAt else { return nil }
-        let totalMinutes = max(0, Int(now.timeIntervalSince(capturedAt) / 60))
+    /// When the bridge last verified the platform session. Any platform call
+    /// (conversation or quota measurement) records the outcome, so this is the
+    /// last moment the session was known to work. Nil means the bridge never
+    /// called the platform since it started.
+    static func sessionVerifiedLabel(verifiedAt: Date?, now: Date = Date()) -> String {
+        guard let verifiedAt else { return "Session: not verified yet" }
+        let totalMinutes = max(0, Int(now.timeIntervalSince(verifiedAt) / 60))
         let totalHours = totalMinutes / 60
         let days = totalHours / 24
         let hours = totalHours % 24
         let minutes = totalMinutes % 60
 
         if days > 0 {
-            return "Session: \(days)d \(hours)h old"
+            return "Session: verified \(days)d \(hours)h ago"
         }
         if totalHours > 0 {
-            return "Session: \(totalHours)h \(minutes)m old"
+            return "Session: verified \(totalHours)h \(minutes)m ago"
         }
-        return "Session: \(minutes)m old"
-    }
-
-    /// True when the session capture is older than the measured cookie lifetime.
-    static func isSessionStale(capturedAt: Date?, now: Date = Date()) -> Bool {
-        guard let capturedAt else { return false }
-        return now.timeIntervalSince(capturedAt) >= Double(sessionStaleAgeMinutes) * 60
+        return "Session: verified \(minutes)m ago"
     }
 
     static func warningLevel(used: Double, limit: Double) -> Int? {
@@ -133,7 +124,6 @@ final class GlobAIProvider: ProviderProtocol {
 
     private struct BridgeCredentials: Decodable {
         let jwt: BridgeJWT?
-        let capturedAt: String?
     }
 
     private struct BridgeJWT: Decodable {
@@ -142,6 +132,7 @@ final class GlobAIProvider: ProviderProtocol {
 
     private struct BridgeHeartbeat: Decodable {
         let cookieAlive: Bool?
+        let lastBeat: String?
     }
 
     private struct BridgeQuota: Decodable {
@@ -196,18 +187,14 @@ final class GlobAIProvider: ProviderProtocol {
     }
 
     func fetch() async throws -> ProviderResult {
-        let healthData = try await requestBridgeData(urlString: Self.bridgeHealthURL, timeout: 3)
-        let health = try Self.decodeHealthSnapshot(from: healthData)
+        // /health carries the session heartbeat and JWT expiry; /quota measures
+        // the project quota live. Requesting /quota on every refresh also
+        // verifies the platform session, so the heartbeat stays current.
+        async let healthData = requestBridgeData(urlString: Self.bridgeHealthURL, timeout: 3)
+        async let quotaData = requestBridgeData(urlString: Self.bridgeQuotaURL, timeout: 10)
 
-        // The bridge keeps quota in memory only and measures it on demand
-        // (never polled in the background). After a bridge restart /health
-        // carries no numbers until one measurement is requested.
-        let quota: GlobAIQuotaSnapshot
-        if let measured = health.quota {
-            quota = measured
-        } else {
-            quota = try await measureQuotaOnDemand()
-        }
+        let health = try await Self.decodeHealthSnapshot(from: healthData)
+        let quota = try await Self.decodeQuotaSnapshot(from: quotaData)
 
         let snapshot = GlobAIQuotaSnapshot(
             usedUSD: quota.usedUSD,
@@ -216,12 +203,12 @@ final class GlobAIProvider: ProviderProtocol {
             usagePercentage: quota.usagePercentage,
             updatedAt: quota.updatedAt,
             tokenExpiresAt: health.tokenExpiresAt,
-            sessionCapturedAt: health.sessionCapturedAt
+            sessionVerifiedAt: health.sessionVerifiedAt
         )
 
         let updatedLabel = snapshot.updatedAtLabel ?? "unknown"
         let tokenLabel = GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: snapshot.tokenExpiresAt) ?? "unknown"
-        let sessionLabel = GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: snapshot.sessionCapturedAt) ?? "unknown"
+        let sessionLabel = GlobAIQuotaSnapshot.sessionVerifiedLabel(verifiedAt: snapshot.sessionVerifiedAt)
         debugLog("Project quota received: USD \(String(format: "%.2f", quota.usedUSD)) of USD \(String(format: "%.2f", quota.hardLimitUSD)); updated \(updatedLabel); token \(tokenLabel); \(sessionLabel)")
 
         let details = DetailedUsage(
@@ -231,20 +218,13 @@ final class GlobAIProvider: ProviderProtocol {
             resetPeriod: quota.updatedAtLabel,
             monthlyCost: quota.usedUSD,
             tokenExpiresAt: snapshot.tokenExpiresAt,
-            sessionCapturedAt: snapshot.sessionCapturedAt
+            sessionVerifiedAt: snapshot.sessionVerifiedAt
         )
 
         return ProviderResult(
             usage: .payAsYouGo(utilization: quota.usagePercentage, cost: quota.usedUSD, resetsAt: nil),
             details: details
         )
-    }
-
-    /// The bridge measures quota only when asked (no background polling).
-    private func measureQuotaOnDemand() async throws -> GlobAIQuotaSnapshot {
-        debugLog("Health has no measured quota yet; requesting on-demand /quota measurement")
-        let quotaData = try await requestBridgeData(urlString: Self.bridgeQuotaURL, timeout: 10)
-        return try Self.decodeQuotaSnapshot(from: quotaData)
     }
 
     private func requestBridgeData(urlString: String, timeout: TimeInterval) async throws -> Data {
@@ -275,11 +255,12 @@ final class GlobAIProvider: ProviderProtocol {
     }
 
     /// Decoded bridge health: the measured quota when available (nil until the
-    /// bridge has measured it since its last start) plus the session token expiry.
+    /// bridge has measured it since its last start), the session token expiry
+    /// and the last platform-session verification time.
     struct GlobAIHealthSnapshot: Equatable {
         let quota: GlobAIQuotaSnapshot?
         let tokenExpiresAt: Date?
-        let sessionCapturedAt: Date?
+        let sessionVerifiedAt: Date?
     }
 
     static func decodeHealthSnapshot(from data: Data) throws -> GlobAIHealthSnapshot {
@@ -298,9 +279,9 @@ final class GlobAIProvider: ProviderProtocol {
         }
 
         let tokenExpiresAt = health.credentials?.jwt.flatMap { Self.parseUpdatedAt($0.expiresAt) }
-        let sessionCapturedAt = health.credentials.flatMap { Self.parseUpdatedAt($0.capturedAt) }
+        let sessionVerifiedAt = health.heartbeat.flatMap { Self.parseUpdatedAt($0.lastBeat) }
         let quota = try Self.measuredQuota(from: health.quota)
-        return GlobAIHealthSnapshot(quota: quota, tokenExpiresAt: tokenExpiresAt, sessionCapturedAt: sessionCapturedAt)
+        return GlobAIHealthSnapshot(quota: quota, tokenExpiresAt: tokenExpiresAt, sessionVerifiedAt: sessionVerifiedAt)
     }
 
     /// Decodes a bridge payload that must contain measured quota numbers

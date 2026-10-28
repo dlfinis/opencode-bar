@@ -2595,7 +2595,7 @@ final class StatusBarController: NSObject {
             remainingUSD: details?.limitRemaining,
             updatedAt: details?.resetPeriod,
             tokenExpiresAt: details?.tokenExpiresAt,
-            sessionCapturedAt: details?.sessionCapturedAt,
+            sessionVerifiedAt: details?.sessionVerifiedAt,
             errorMessage: errorMessage
         )
         return item
@@ -2607,7 +2607,7 @@ final class StatusBarController: NSObject {
         remainingUSD: Double?,
         updatedAt: String?,
         tokenExpiresAt: Date? = nil,
-        sessionCapturedAt: Date? = nil,
+        sessionVerifiedAt: Date? = nil,
         errorMessage: String?
     ) -> NSMenu {
         let submenu = NSMenu()
@@ -2624,20 +2624,12 @@ final class StatusBarController: NSObject {
             if let updatedAt {
                 addGlobAIDisabledMenuRow("Last quota update: \(updatedAt)", to: submenu)
             }
-            if let sessionLabel = GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: sessionCapturedAt) {
-                if GlobAIQuotaSnapshot.isSessionStale(capturedAt: sessionCapturedAt) {
-                    addGlobAIWarningRow(
-                        "\(sessionLabel) — recapture with ~/.agents/globai/refresh.sh",
-                        to: submenu
-                    )
-                } else {
-                    addGlobAIDisabledMenuRow(
-                        sessionLabel,
-                        to: submenu,
-                        icon: NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Bridge session cookie age")
-                    )
-                }
-            }
+            let sessionLabel = GlobAIQuotaSnapshot.sessionVerifiedLabel(verifiedAt: sessionVerifiedAt)
+            addGlobAIDisabledMenuRow(
+                sessionLabel,
+                to: submenu,
+                icon: NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Bridge session verification")
+            )
             if let tokenLabel = GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: tokenExpiresAt) {
                 addGlobAIDisabledMenuRow(
                     tokenLabel,
