@@ -267,6 +267,12 @@ struct DetailedUsage {
     let copilotLimitRequests: Int?
     let copilotQuotaResetDateUTC: Date?
 
+    // Glob.AI bridge session token expiry
+    let tokenExpiresAt: Date?
+
+    // Glob.AI bridge session capture age (ALB cookie freshness)
+    let sessionCapturedAt: Date?
+
     init(
         dailyUsage: Double? = nil,
         weeklyUsage: Double? = nil,
@@ -356,7 +362,9 @@ struct DetailedUsage {
         copilotOverageRequests: Double? = nil,
         copilotUsedRequests: Int? = nil,
         copilotLimitRequests: Int? = nil,
-        copilotQuotaResetDateUTC: Date? = nil
+        copilotQuotaResetDateUTC: Date? = nil,
+        tokenExpiresAt: Date? = nil,
+        sessionCapturedAt: Date? = nil
     ) {
         self.dailyUsage = dailyUsage
         self.weeklyUsage = weeklyUsage
@@ -447,6 +455,8 @@ struct DetailedUsage {
         self.copilotUsedRequests = copilotUsedRequests
         self.copilotLimitRequests = copilotLimitRequests
         self.copilotQuotaResetDateUTC = copilotQuotaResetDateUTC
+        self.tokenExpiresAt = tokenExpiresAt
+        self.sessionCapturedAt = sessionCapturedAt
     }
 }
 
@@ -475,6 +485,8 @@ extension DetailedUsage: Codable {
         case toolNetworkSearchCount, toolWebReadCount, toolZreadCount
         case cursorAutoUsage, cursorAutoReset, cursorApiUsage, cursorApiReset
         case copilotOverageCost, copilotOverageRequests, copilotUsedRequests, copilotLimitRequests, copilotQuotaResetDateUTC
+        case tokenExpiresAt
+        case sessionCapturedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -568,6 +580,8 @@ extension DetailedUsage: Codable {
         copilotUsedRequests = try container.decodeIfPresent(Int.self, forKey: .copilotUsedRequests)
         copilotLimitRequests = try container.decodeIfPresent(Int.self, forKey: .copilotLimitRequests)
         copilotQuotaResetDateUTC = try container.decodeIfPresent(Date.self, forKey: .copilotQuotaResetDateUTC)
+        tokenExpiresAt = try container.decodeIfPresent(Date.self, forKey: .tokenExpiresAt)
+        sessionCapturedAt = try container.decodeIfPresent(Date.self, forKey: .sessionCapturedAt)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -661,6 +675,8 @@ extension DetailedUsage: Codable {
         try container.encodeIfPresent(copilotUsedRequests, forKey: .copilotUsedRequests)
         try container.encodeIfPresent(copilotLimitRequests, forKey: .copilotLimitRequests)
         try container.encodeIfPresent(copilotQuotaResetDateUTC, forKey: .copilotQuotaResetDateUTC)
+        try container.encodeIfPresent(tokenExpiresAt, forKey: .tokenExpiresAt)
+        try container.encodeIfPresent(sessionCapturedAt, forKey: .sessionCapturedAt)
     }
 }
 
@@ -1597,5 +1613,7 @@ extension DetailedUsage {
             || copilotOverageCost != nil || copilotOverageRequests != nil
             || copilotUsedRequests != nil || copilotLimitRequests != nil
             || copilotQuotaResetDateUTC != nil
+            || tokenExpiresAt != nil
+            || sessionCapturedAt != nil
     }
 }

@@ -9,6 +9,27 @@ struct GlobAIQuotaSnapshot: Equatable {
     let remainingUSD: Double
     let usagePercentage: Double
     let updatedAt: Date?
+    let tokenExpiresAt: Date?
+    /// When the freshest bridge credential capture (ALB session cookie) was read.
+    let sessionCapturedAt: Date?
+
+    init(
+        usedUSD: Double,
+        hardLimitUSD: Double,
+        remainingUSD: Double,
+        usagePercentage: Double,
+        updatedAt: Date?,
+        tokenExpiresAt: Date? = nil,
+        sessionCapturedAt: Date? = nil
+    ) {
+        self.usedUSD = usedUSD
+        self.hardLimitUSD = hardLimitUSD
+        self.remainingUSD = remainingUSD
+        self.usagePercentage = usagePercentage
+        self.updatedAt = updatedAt
+        self.tokenExpiresAt = tokenExpiresAt
+        self.sessionCapturedAt = sessionCapturedAt
+    }
 
     var updatedAtLabel: String? {
         guard let updatedAt else { return nil }
@@ -18,6 +39,59 @@ struct GlobAIQuotaSnapshot: Equatable {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: updatedAt)
+    }
+
+    /// Human label for the bridge Bearer JWT expiry (24h lifetime).
+    /// Returns nil when the expiry is unknown, "Bearer expired" once in the past.
+    static func tokenExpiryLabel(expiresAt: Date?, now: Date = Date()) -> String? {
+        guard let tokenExpiresAt = expiresAt else { return nil }
+        let remaining = Int(tokenExpiresAt.timeIntervalSince(now))
+        if remaining <= 0 { return "Bearer expired" }
+
+        let totalMinutes = remaining / 60
+        let totalHours = totalMinutes / 60
+        let days = totalHours / 24
+        let hours = totalHours % 24
+        let minutes = totalMinutes % 60
+
+        if days > 0 {
+            return "Bearer expires in \(days)d \(hours)h"
+        }
+        if totalHours > 0 {
+            return "Bearer expires in \(totalHours)h"
+        }
+        return "Bearer expires in \(minutes)m"
+    }
+
+    /// The platform ALB session cookie (`AWSVAAuthSessionCookie`) is the actual
+    /// short-lived credential (~1h measured; see globai PLAYBOOK). It carries no
+    /// client-readable expiry, so the bridge reports when the freshest capture
+    /// was taken. A capture older than the measured cookie lifetime means the
+    /// browser renewal chain stopped and the session is likely dead.
+    static let sessionStaleAgeMinutes = 50
+
+    /// Age of the freshest session capture, or nil when unknown.
+    static func sessionAgeLabel(capturedAt: Date?, now: Date = Date()) -> String? {
+        guard let capturedAt else { return nil }
+        let totalMinutes = max(0, Int(now.timeIntervalSince(capturedAt) / 60))
+        let totalHours = totalMinutes / 60
+        let days = totalHours / 24
+        let hours = totalHours % 24
+        let minutes = totalMinutes % 60
+
+        if days > 0 {
+            return "Session: \(days)d \(hours)h old"
+        }
+        if totalHours > 0 {
+            return "Session: \(totalHours)h \(minutes)m old"
+        }
+        return "Session: \(minutes)m old"
+    }
+
+    /// True when the session capture is older than the measured cookie lifetime.
+    static func isSessionStale(capturedAt: Date?, now: Date = Date()) -> Bool {
+        guard let capturedAt else { return false }
+        return now.timeIntervalSince(capturedAt) >= Double(sessionStaleAgeMinutes) * 60
     }
 
     static func warningLevel(used: Double, limit: Double) -> Int? {
@@ -45,14 +119,25 @@ final class GlobAIProvider: ProviderProtocol {
     let allowsCachedResultOnFetchFailure = true
 
     private static let bridgeHealthURL = "http://127.0.0.1:8787/health"
+    private static let bridgeQuotaURL = "http://127.0.0.1:8787/quota"
     private static let bridgeConnectionError = "Cannot connect to the local Glob.AI OS bridge at 127.0.0.1:8787. Start it with ~/.agents/globai/bridge.sh start."
 
     private let dataRequest: DataRequest
 
     private struct BridgeHealthResponse: Decodable {
         let ok: Bool?
+        let credentials: BridgeCredentials?
         let heartbeat: BridgeHeartbeat?
         let quota: BridgeQuota?
+    }
+
+    private struct BridgeCredentials: Decodable {
+        let jwt: BridgeJWT?
+        let capturedAt: String?
+    }
+
+    private struct BridgeJWT: Decodable {
+        let expiresAt: String?
     }
 
     private struct BridgeHeartbeat: Decodable {
@@ -83,7 +168,7 @@ final class GlobAIProvider: ProviderProtocol {
         self.dataRequest = dataRequest
     }
 
-    var fetchTimeout: TimeInterval { 5 }
+    var fetchTimeout: TimeInterval { 12 }
 
     func shouldPauseAutomaticRefresh(after error: Error) -> Bool {
         guard let providerError = error as? ProviderError,
@@ -111,16 +196,67 @@ final class GlobAIProvider: ProviderProtocol {
     }
 
     func fetch() async throws -> ProviderResult {
-        guard let url = URL(string: Self.bridgeHealthURL) else {
-            throw ProviderError.providerError("Invalid local Glob.AI OS bridge URL.")
+        let healthData = try await requestBridgeData(urlString: Self.bridgeHealthURL, timeout: 3)
+        let health = try Self.decodeHealthSnapshot(from: healthData)
+
+        // The bridge keeps quota in memory only and measures it on demand
+        // (never polled in the background). After a bridge restart /health
+        // carries no numbers until one measurement is requested.
+        let quota: GlobAIQuotaSnapshot
+        if let measured = health.quota {
+            quota = measured
+        } else {
+            quota = try await measureQuotaOnDemand()
         }
 
+        let snapshot = GlobAIQuotaSnapshot(
+            usedUSD: quota.usedUSD,
+            hardLimitUSD: quota.hardLimitUSD,
+            remainingUSD: quota.remainingUSD,
+            usagePercentage: quota.usagePercentage,
+            updatedAt: quota.updatedAt,
+            tokenExpiresAt: health.tokenExpiresAt,
+            sessionCapturedAt: health.sessionCapturedAt
+        )
+
+        let updatedLabel = snapshot.updatedAtLabel ?? "unknown"
+        let tokenLabel = GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: snapshot.tokenExpiresAt) ?? "unknown"
+        let sessionLabel = GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: snapshot.sessionCapturedAt) ?? "unknown"
+        debugLog("Project quota received: USD \(String(format: "%.2f", quota.usedUSD)) of USD \(String(format: "%.2f", quota.hardLimitUSD)); updated \(updatedLabel); token \(tokenLabel); \(sessionLabel)")
+
+        let details = DetailedUsage(
+            monthlyUsage: quota.usagePercentage,
+            limit: quota.hardLimitUSD,
+            limitRemaining: quota.remainingUSD,
+            resetPeriod: quota.updatedAtLabel,
+            monthlyCost: quota.usedUSD,
+            tokenExpiresAt: snapshot.tokenExpiresAt,
+            sessionCapturedAt: snapshot.sessionCapturedAt
+        )
+
+        return ProviderResult(
+            usage: .payAsYouGo(utilization: quota.usagePercentage, cost: quota.usedUSD, resetsAt: nil),
+            details: details
+        )
+    }
+
+    /// The bridge measures quota only when asked (no background polling).
+    private func measureQuotaOnDemand() async throws -> GlobAIQuotaSnapshot {
+        debugLog("Health has no measured quota yet; requesting on-demand /quota measurement")
+        let quotaData = try await requestBridgeData(urlString: Self.bridgeQuotaURL, timeout: 10)
+        return try Self.decodeQuotaSnapshot(from: quotaData)
+    }
+
+    private func requestBridgeData(urlString: String, timeout: TimeInterval) async throws -> Data {
+        guard let url = URL(string: urlString) else {
+            throw ProviderError.providerError("Invalid local Glob.AI OS bridge URL.")
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 3
+        request.timeoutInterval = timeout
 
-        globAILogger.info("Fetching Glob.AI project quota from the local bridge")
+        globAILogger.info("Requesting \(url.path, privacy: .public) from the local Glob.AI OS bridge")
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await dataRequest(request)
@@ -135,25 +271,18 @@ final class GlobAIProvider: ProviderProtocol {
             throw ProviderError.networkError("The local Glob.AI OS bridge returned HTTP \(httpResponse.statusCode).")
         }
 
-        let quota = try Self.decodeQuotaSnapshot(from: data)
-        let updatedLabel = quota.updatedAtLabel ?? "unknown"
-        debugLog("Project quota received: USD \(String(format: "%.2f", quota.usedUSD)) of USD \(String(format: "%.2f", quota.hardLimitUSD)); updated \(updatedLabel)")
-
-        let details = DetailedUsage(
-            monthlyUsage: quota.usagePercentage,
-            limit: quota.hardLimitUSD,
-            limitRemaining: quota.remainingUSD,
-            resetPeriod: quota.updatedAtLabel,
-            monthlyCost: quota.usedUSD
-        )
-
-        return ProviderResult(
-            usage: .payAsYouGo(utilization: quota.usagePercentage, cost: quota.usedUSD, resetsAt: nil),
-            details: details
-        )
+        return data
     }
 
-    static func decodeQuotaSnapshot(from data: Data) throws -> GlobAIQuotaSnapshot {
+    /// Decoded bridge health: the measured quota when available (nil until the
+    /// bridge has measured it since its last start) plus the session token expiry.
+    struct GlobAIHealthSnapshot: Equatable {
+        let quota: GlobAIQuotaSnapshot?
+        let tokenExpiresAt: Date?
+        let sessionCapturedAt: Date?
+    }
+
+    static func decodeHealthSnapshot(from data: Data) throws -> GlobAIHealthSnapshot {
         let health: BridgeHealthResponse
         do {
             health = try JSONDecoder().decode(BridgeHealthResponse.self, from: data)
@@ -167,10 +296,28 @@ final class GlobAIProvider: ProviderProtocol {
         guard health.heartbeat?.cookieAlive != false else {
             throw ProviderError.networkError("The Glob.AI OS session is disconnected. Restore the bridge session, then select Refresh.")
         }
-        guard let quota = health.quota,
+
+        let tokenExpiresAt = health.credentials?.jwt.flatMap { Self.parseUpdatedAt($0.expiresAt) }
+        let sessionCapturedAt = health.credentials.flatMap { Self.parseUpdatedAt($0.capturedAt) }
+        let quota = try Self.measuredQuota(from: health.quota)
+        return GlobAIHealthSnapshot(quota: quota, tokenExpiresAt: tokenExpiresAt, sessionCapturedAt: sessionCapturedAt)
+    }
+
+    /// Decodes a bridge payload that must contain measured quota numbers
+    /// (either /health after a measurement or the on-demand /quota response).
+    static func decodeQuotaSnapshot(from data: Data) throws -> GlobAIQuotaSnapshot {
+        let health = try Self.decodeHealthSnapshot(from: data)
+        guard let quota = health.quota else {
+            throw ProviderError.networkError("The local Glob.AI OS bridge has not measured project quota yet.")
+        }
+        return quota
+    }
+
+    private static func measuredQuota(from quota: BridgeQuota?) throws -> GlobAIQuotaSnapshot? {
+        guard let quota,
               let used = quota.usedUSD,
               let hardLimit = quota.hardLimitUSD else {
-            throw ProviderError.networkError("The local Glob.AI OS bridge has not measured project quota yet.")
+            return nil
         }
 
         guard used.isFinite, used >= 0,

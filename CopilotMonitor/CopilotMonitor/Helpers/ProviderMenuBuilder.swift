@@ -109,6 +109,8 @@ extension StatusBarController {
                 hardLimitUSD: details.limit,
                 remainingUSD: details.limitRemaining,
                 updatedAt: details.resetPeriod,
+                tokenExpiresAt: details.tokenExpiresAt,
+                sessionCapturedAt: details.sessionCapturedAt,
                 errorMessage: nil
             )
 

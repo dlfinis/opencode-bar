@@ -2594,6 +2594,8 @@ final class StatusBarController: NSObject {
             hardLimitUSD: details?.limit,
             remainingUSD: details?.limitRemaining,
             updatedAt: details?.resetPeriod,
+            tokenExpiresAt: details?.tokenExpiresAt,
+            sessionCapturedAt: details?.sessionCapturedAt,
             errorMessage: errorMessage
         )
         return item
@@ -2604,6 +2606,8 @@ final class StatusBarController: NSObject {
         hardLimitUSD: Double?,
         remainingUSD: Double?,
         updatedAt: String?,
+        tokenExpiresAt: Date? = nil,
+        sessionCapturedAt: Date? = nil,
         errorMessage: String?
     ) -> NSMenu {
         let submenu = NSMenu()
@@ -2619,6 +2623,27 @@ final class StatusBarController: NSObject {
             addGlobAIDisabledMenuRow(String(format: "Limit remaining: $%.2f", remaining), to: submenu)
             if let updatedAt {
                 addGlobAIDisabledMenuRow("Last quota update: \(updatedAt)", to: submenu)
+            }
+            if let sessionLabel = GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: sessionCapturedAt) {
+                if GlobAIQuotaSnapshot.isSessionStale(capturedAt: sessionCapturedAt) {
+                    addGlobAIWarningRow(
+                        "\(sessionLabel) — recapture with ~/.agents/globai/refresh.sh",
+                        to: submenu
+                    )
+                } else {
+                    addGlobAIDisabledMenuRow(
+                        sessionLabel,
+                        to: submenu,
+                        icon: NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Bridge session cookie age")
+                    )
+                }
+            }
+            if let tokenLabel = GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: tokenExpiresAt) {
+                addGlobAIDisabledMenuRow(
+                    tokenLabel,
+                    to: submenu,
+                    icon: NSImage(systemSymbolName: "clock", accessibilityDescription: "Bearer token expiry")
+                )
             }
 
             let warningLevel = GlobAIQuotaSnapshot.warningLevel(used: usedUSD, limit: hardLimitUSD)

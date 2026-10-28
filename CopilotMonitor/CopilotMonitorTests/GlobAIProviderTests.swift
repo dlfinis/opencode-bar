@@ -45,6 +45,83 @@ final class GlobAIProviderTests: XCTestCase {
         }
     }
 
+    func testFetchFallsBackToOnDemandQuotaAfterBridgeRestart() async throws {
+        let healthWithoutQuota = Data(
+            #"{"ok":true,"heartbeat":{"cookieAlive":true},"credentials":{"capturedAt":"2026-10-27T15:53:45.233Z","jwt":{"expiresAt":"2026-10-28T15:53:39.000Z","remainingMin":1365}},"quota":{"status":"not refreshed automatically; call GET /quota when needed"}}"#.utf8
+        )
+        let onDemandQuota = Data(
+            #"{"ok":true,"quota":{"usedUsd":2.9655,"hardLimitUsd":50,"softLimitUsd":40,"remainingUsd":47.03,"pct":5.93,"updatedAt":"2026-10-27T17:08:38.789Z"}}"#.utf8
+        )
+
+        let requestPaths = RequestPathRecorder()
+        let provider = GlobAIProvider(dataRequest: { request in
+            let url = try XCTUnwrap(request.url)
+            requestPaths.append(url.path)
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            ))
+            if url.path == "/health" {
+                return (healthWithoutQuota, response)
+            }
+            return (onDemandQuota, response)
+        })
+
+        let result = try await provider.fetch()
+
+        XCTAssertEqual(requestPaths.recorded(), ["/health", "/quota"])
+        XCTAssertEqual(result.usage.cost ?? -1, 2.9655, accuracy: 0.000001)
+        XCTAssertEqual(result.details?.limit ?? -1, 50, accuracy: 0.000000001)
+        // Token expiry comes from the health payload even when quota came from /quota.
+        XCTAssertNotNil(result.details?.tokenExpiresAt)
+        XCTAssertNotNil(result.details?.sessionCapturedAt)
+    }
+
+    func testDecodeHealthSnapshotReadsSessionTokenExpiry() throws {
+        let data = Data(
+            #"{"ok":true,"credentials":{"capturedAt":"2026-10-27T15:53:45.233Z","jwt":{"expiresAt":"2026-10-28T15:53:39.000Z","remainingMin":1365}},"heartbeat":{"cookieAlive":true},"quota":{"status":"not refreshed automatically; call GET /quota when needed"}}"#.utf8
+        )
+
+        let health = try GlobAIProvider.decodeHealthSnapshot(from: data)
+        XCTAssertNil(health.quota, "Unmeasured quota must not be an error at health decode time")
+        let expiresAt = try XCTUnwrap(health.tokenExpiresAt)
+        let expected = try XCTUnwrap(Self.parseISOUTC("2026-10-28T15:53:39.000Z"))
+        XCTAssertEqual(expiresAt.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 1)
+        let capturedAt = try XCTUnwrap(health.sessionCapturedAt)
+        let expectedCapture = try XCTUnwrap(Self.parseISOUTC("2026-10-27T15:53:45.233Z"))
+        XCTAssertEqual(capturedAt.timeIntervalSince1970, expectedCapture.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testSessionAgeLabelFollowsDurationRules() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertNil(GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: nil, now: now))
+        XCTAssertEqual(GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: now.addingTimeInterval(-43 * 60), now: now), "Session: 43m old")
+        XCTAssertEqual(GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: now.addingTimeInterval(-72 * 60), now: now), "Session: 1h 12m old")
+        XCTAssertEqual(GlobAIQuotaSnapshot.sessionAgeLabel(capturedAt: now.addingTimeInterval(-51 * 3600), now: now), "Session: 2d 3h old")
+    }
+
+    func testSessionStalenessUsesMeasuredCookieLifetime() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertFalse(GlobAIQuotaSnapshot.isSessionStale(capturedAt: nil, now: now))
+        XCTAssertFalse(GlobAIQuotaSnapshot.isSessionStale(capturedAt: now.addingTimeInterval(-49 * 60), now: now))
+        XCTAssertTrue(GlobAIQuotaSnapshot.isSessionStale(capturedAt: now.addingTimeInterval(-51 * 60), now: now))
+        XCTAssertEqual(GlobAIQuotaSnapshot.sessionStaleAgeMinutes, 50)
+    }
+
+    func testTokenExpiryLabelFollowsDurationRules() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertNil(GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: nil, now: now))
+        XCTAssertEqual(GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: now.addingTimeInterval(-1), now: now), "Bearer expired")
+        XCTAssertEqual(GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: now.addingTimeInterval(30 * 60), now: now), "Bearer expires in 30m")
+        XCTAssertEqual(GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: now.addingTimeInterval(3 * 3600), now: now), "Bearer expires in 3h")
+        XCTAssertEqual(GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: now.addingTimeInterval(26 * 3600), now: now), "Bearer expires in 1d 2h")
+    }
+
     func testExpiredBridgeSessionIsDetectedAsConnectionFailure() {
         let data = Data(
             #"{"ok":true,"heartbeat":{"cookieAlive":false},"quota":{"usedUsd":1,"hardLimitUsd":50,"remainingUsd":49,"pct":2,"updatedAt":"2026-10-16T12:34:56Z"}}"#.utf8
@@ -165,6 +242,30 @@ final class GlobAIProviderTests: XCTestCase {
             {"ok":true,"heartbeat":{"cookieAlive":true},"quota":{"usedUsd":\(used),"hardLimitUsd":50,"remainingUsd":\(remaining),"pct":\(percentage),"updatedAt":"2026-10-16T12:34:56.789Z"}}
             """.utf8
         )
+    }
+
+    private static func parseISOUTC(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter.date(from: value)
+    }
+}
+
+private final class RequestPathRecorder {
+    private let lock = NSLock()
+    private var paths: [String] = []
+
+    func append(_ path: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        paths.append(path)
+    }
+
+    func recorded() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return paths
     }
 }
 
