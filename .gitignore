@@ -1,6 +1,7 @@
 # macOS
 .DS_Store
 
+.atl
 # Xcode
 .build/
 build/
