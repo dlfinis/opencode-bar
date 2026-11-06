@@ -13,6 +13,10 @@ struct GlobAIQuotaSnapshot: Equatable {
     /// When the bridge last verified the platform session (result of the most
     /// recent platform call, conversation or quota measurement alike).
     let sessionVerifiedAt: Date?
+    /// When the freshest ALB session-cookie capture was taken. The cookie is
+    /// the short-lived credential (~1h measured); its age is the real session
+    /// countdown, unlike the 24h Bearer JWT the browser renews on its own.
+    let cookieCapturedAt: Date?
 
     init(
         usedUSD: Double,
@@ -21,7 +25,8 @@ struct GlobAIQuotaSnapshot: Equatable {
         usagePercentage: Double,
         updatedAt: Date?,
         tokenExpiresAt: Date? = nil,
-        sessionVerifiedAt: Date? = nil
+        sessionVerifiedAt: Date? = nil,
+        cookieCapturedAt: Date? = nil
     ) {
         self.usedUSD = usedUSD
         self.hardLimitUSD = hardLimitUSD
@@ -30,6 +35,7 @@ struct GlobAIQuotaSnapshot: Equatable {
         self.updatedAt = updatedAt
         self.tokenExpiresAt = tokenExpiresAt
         self.sessionVerifiedAt = sessionVerifiedAt
+        self.cookieCapturedAt = cookieCapturedAt
     }
 
     var updatedAtLabel: String? {
@@ -62,6 +68,35 @@ struct GlobAIQuotaSnapshot: Equatable {
             return "Bearer expires in \(totalHours)h"
         }
         return "Bearer expires in \(minutes)m"
+    }
+
+    /// Measured ALB cookie lifetime, in minutes (globai PLAYBOOK "~1h, en
+    /// medición"; observed death ~54 min after capture). The cookie carries no
+    /// client-readable expiry, so the capture age is the only countdown.
+    static let cookieStaleAgeMinutes = 50
+
+    /// Age of the freshest session-cookie capture, or nil when unknown.
+    static func cookieAgeLabel(capturedAt: Date?, now: Date = Date()) -> String? {
+        guard let capturedAt else { return nil }
+        let totalMinutes = max(0, Int(now.timeIntervalSince(capturedAt) / 60))
+        let totalHours = totalMinutes / 60
+        let days = totalHours / 24
+        let hours = totalHours % 24
+        let minutes = totalMinutes % 60
+
+        if days > 0 {
+            return "Cookie: \(days)d \(hours)h old"
+        }
+        if totalHours > 0 {
+            return "Cookie: \(totalHours)h \(minutes)m old"
+        }
+        return "Cookie: \(minutes)m old"
+    }
+
+    /// True when the cookie age is near or past the measured ~1h lifetime.
+    static func isCookieStale(capturedAt: Date?, now: Date = Date()) -> Bool {
+        guard let capturedAt else { return false }
+        return now.timeIntervalSince(capturedAt) >= Double(cookieStaleAgeMinutes) * 60
     }
 
     /// When the bridge last verified the platform session. Any platform call
@@ -124,6 +159,7 @@ final class GlobAIProvider: ProviderProtocol {
 
     private struct BridgeCredentials: Decodable {
         let jwt: BridgeJWT?
+        let capturedAt: String?
     }
 
     private struct BridgeJWT: Decodable {
@@ -261,6 +297,7 @@ final class GlobAIProvider: ProviderProtocol {
         let quota: GlobAIQuotaSnapshot?
         let tokenExpiresAt: Date?
         let sessionVerifiedAt: Date?
+        let cookieCapturedAt: Date?
     }
 
     static func decodeHealthSnapshot(from data: Data) throws -> GlobAIHealthSnapshot {
@@ -280,8 +317,14 @@ final class GlobAIProvider: ProviderProtocol {
 
         let tokenExpiresAt = health.credentials?.jwt.flatMap { Self.parseUpdatedAt($0.expiresAt) }
         let sessionVerifiedAt = health.heartbeat.flatMap { Self.parseUpdatedAt($0.lastBeat) }
+        let cookieCapturedAt = health.credentials?.capturedAt.flatMap { Self.parseUpdatedAt($0) }
         let quota = try Self.measuredQuota(from: health.quota)
-        return GlobAIHealthSnapshot(quota: quota, tokenExpiresAt: tokenExpiresAt, sessionVerifiedAt: sessionVerifiedAt)
+        return GlobAIHealthSnapshot(
+            quota: quota,
+            tokenExpiresAt: tokenExpiresAt,
+            sessionVerifiedAt: sessionVerifiedAt,
+            cookieCapturedAt: cookieCapturedAt
+        )
     }
 
     /// Decodes a bridge payload that must contain measured quota numbers
