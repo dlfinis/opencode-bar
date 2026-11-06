@@ -34,6 +34,18 @@ enum ProviderIdentifier: String, CaseIterable {
     case mistral = "mistral"
     case globAI = "glob_ai"
 
+    /// Providers compiled into this build. Glob.AI is a work-specific
+    /// integration backed by a local bridge, so it is only present when the
+    /// build defines `GLOBAI_ENABLED` (see Config/Local.xcconfig). Shared
+    /// builds leave it out of every user-facing list.
+    static var compiledIn: [ProviderIdentifier] {
+        #if GLOBAI_ENABLED
+        return allCases
+        #else
+        return allCases.filter { $0 != .globAI }
+        #endif
+    }
+
     var displayName: String {
         switch self {
         case .copilot:

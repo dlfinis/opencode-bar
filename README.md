@@ -151,6 +151,20 @@ open "$(xcodebuild -project CopilotMonitor/CopilotMonitor.xcodeproj -scheme Copi
 - Xcode 15.0+ (for building from source)
 - [OpenCode](https://opencode.ai) installed with authenticated providers
 
+### Personal Build Overrides
+
+`CopilotMonitor/Config/Shared.xcconfig` includes `Local.xcconfig` when it exists,
+and `Local.xcconfig` is git-ignored. Use it for integrations that should not ship
+in shared builds:
+
+```bash
+cp CopilotMonitor/Config/Local.xcconfig.example CopilotMonitor/Config/Local.xcconfig
+```
+
+`GLOBAI_ENABLED` compiles the Glob.AI provider, a work-specific integration
+backed by a local bridge. Without it, shared builds register no Glob.AI
+provider and show no menu row, settings toggle, or CLI entry.
+
 ## Usage
 
 ### Menu Bar App

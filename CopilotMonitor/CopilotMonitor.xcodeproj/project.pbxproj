@@ -185,6 +185,8 @@
 		A454D8C32F30548900E355E3 /* ZaiCodingPlanProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZaiCodingPlanProvider.swift; sourceTree = "<group>"; };
 		DE5E1B4A2C3D4E5F6A7B8C9DE /* DeepSeekProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSeekProvider.swift; sourceTree = "<group>"; };
 		MISTRALFILE222222222222 /* MistralProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MistralProvider.swift; sourceTree = "<group>"; };
+		CONFIGSHARED111111111111 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		CONFIGEXAMPLE11111111111 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		MINIMAXFILE2222222222222 /* MiniMaxProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxProvider.swift; sourceTree = "<group>"; };
 		OCGOFILE2222222222222 /* OpenCodeGoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeGoProvider.swift; sourceTree = "<group>"; };
 		GROKFILE2222222222222 /* GrokProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokProvider.swift; sourceTree = "<group>"; };
@@ -334,9 +336,19 @@
 				ACCCCCCCCCCCCCCCCCCCCCCC /* CopilotMonitor */,
 				CLI7777777777777777777777 /* CLI */,
 				TFFFFFFFFFFFFFFFFFFFFFFFF /* CopilotMonitorTests */,
+				CONFIGGROUP1111111111111 /* Config */,
 				ADDDDDDDDDDDDDDDDDDDDDDD /* Products */,
 				SP3333333333333333333333 /* Frameworks */,
 			);
+			sourceTree = "<group>";
+		};
+		CONFIGGROUP1111111111111 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				CONFIGSHARED111111111111 /* Shared.xcconfig */,
+				CONFIGEXAMPLE11111111111 /* Local.xcconfig.example */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		ACCCCCCCCCCCCCCCCCCCCCCC /* CopilotMonitor */ = {
@@ -773,6 +785,7 @@
 /* Begin XCBuildConfiguration section */
 		B66666666666666666666666 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CONFIGSHARED111111111111 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -837,6 +850,7 @@
 		};
 		B77777777777777777777777 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = CONFIGSHARED111111111111 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;

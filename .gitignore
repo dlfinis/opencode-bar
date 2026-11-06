@@ -45,3 +45,6 @@ package-lock.json
 # Local runtime artifacts
 data/
 nohup.out
+
+# Personal build overrides (see CopilotMonitor/Config/Local.xcconfig.example)
+CopilotMonitor/Config/Local.xcconfig

@@ -441,7 +441,7 @@ final class StatusBarController: NSObject {
                     if onlyShowMode == .pinnedProvider {
                         let pinnedProviderItem = NSMenuItem(title: onlyShowMode.title, action: nil, keyEquivalent: "")
                         onlyShowProviderMenu = NSMenu()
-                        for identifier in ProviderIdentifier.allCases {
+                        for identifier in ProviderIdentifier.compiledIn {
                             let providerItem = NSMenuItem(
                                 title: identifier.displayName,
                                 action: #selector(menuBarOnlyShowProviderSelected(_:)),
@@ -676,6 +676,9 @@ final class StatusBarController: NSObject {
     }
 
     private func isProviderEnabled(_ identifier: ProviderIdentifier) -> Bool {
+        // Providers left out of this build are never enabled, regardless of
+        // any stored preference.
+        guard ProviderIdentifier.compiledIn.contains(identifier) else { return false }
         let key = "provider.\(identifier.rawValue).enabled"
         if UserDefaults.standard.object(forKey: key) == nil {
             return true
@@ -929,12 +932,12 @@ final class StatusBarController: NSObject {
             }
             return selected
         }
-        if let quotaProvider = ProviderIdentifier.allCases.first(where: {
+        if let quotaProvider = ProviderIdentifier.compiledIn.first(where: {
             visibleQuotaProviderIds.contains($0) && isProviderEnabled($0)
         }) {
             return quotaProvider
         }
-        return ProviderIdentifier.allCases.first(where: { isProviderEnabled($0) })
+        return ProviderIdentifier.compiledIn.first(where: { isProviderEnabled($0) })
     }
 
     private static func normalizedUsagePercent(_ percent: Double?) -> Double? {

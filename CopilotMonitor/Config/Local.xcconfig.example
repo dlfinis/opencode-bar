@@ -1,0 +1,8 @@
+// Copy this file to Local.xcconfig (git-ignored) to enable personal
+// integrations in your own builds.
+//
+// GLOBAI_ENABLED compiles the Glob.AI provider. It is a work-specific
+// integration backed by a local bridge, so shared builds leave it out:
+// no provider registration, no menu row, no settings toggle, no CLI entry.
+
+OPENCODEBAR_EXTRA_CONDITIONS = GLOBAI_ENABLED

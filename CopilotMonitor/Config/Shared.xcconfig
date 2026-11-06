@@ -1,0 +1,11 @@
+// Shared build configuration for every target.
+//
+// Personal integrations are opt-in through Local.xcconfig, which is
+// git-ignored. Copy Local.xcconfig.example to Local.xcconfig and set the
+// conditions you need; shared builds stay free of personal providers.
+
+#include? "Local.xcconfig"
+
+// Extra Swift compilation conditions contributed by the local override.
+// Undefined in shared checkouts, so the value below collapses to nothing.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(OPENCODEBAR_EXTRA_CONDITIONS)

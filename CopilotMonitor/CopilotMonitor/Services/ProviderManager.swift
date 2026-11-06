@@ -26,7 +26,7 @@ actor ProviderManager {
     private var providers: [ProviderProtocol] = []
 
     private nonisolated static func makeDefaultProviders() -> [ProviderProtocol] {
-        [
+        var providers: [ProviderProtocol] = [
             CopilotProvider(),
             ClaudeProvider(),
             CodexProvider(),
@@ -47,9 +47,12 @@ actor ProviderManager {
             TavilySearchProvider(),
             BraveSearchProvider(),
             DeepSeekProvider(),
-            MistralProvider(),
-            GlobAIProvider()
+            MistralProvider()
         ]
+        #if GLOBAI_ENABLED
+        providers.append(GlobAIProvider())
+        #endif
+        return providers
     }
 
     // Per-provider timeout is now defined in ProviderProtocol.fetchTimeout

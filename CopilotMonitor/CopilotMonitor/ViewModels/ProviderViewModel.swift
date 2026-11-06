@@ -34,7 +34,7 @@ final class ProviderViewModel: ObservableObject {
         logger.info("🔵 [ProviderViewModel] refresh() started")
         
         var enabledProviders: [ProviderIdentifier] = []
-        for identifier in ProviderIdentifier.allCases {
+        for identifier in ProviderIdentifier.compiledIn {
             let enabledKey = "provider.\(identifier.rawValue).enabled"
             let isEnabled = UserDefaults.standard.object(forKey: enabledKey) == nil
                 || UserDefaults.standard.bool(forKey: enabledKey)

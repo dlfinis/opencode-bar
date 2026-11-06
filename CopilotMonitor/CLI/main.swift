@@ -171,7 +171,7 @@ struct ProviderCommand: ParsableCommand {
             } else {
                 let availableMessage = "\nAvailable providers:\n"
                 stderr.write(Data(availableMessage.utf8))
-                for provider in ProviderIdentifier.allCases.sorted(by: { $0.displayName < $1.displayName }) {
+                for provider in ProviderIdentifier.compiledIn.sorted(by: { $0.displayName < $1.displayName }) {
                     let providerLine = "  - \(provider.rawValue) (\(provider.displayName))\n"
                     stderr.write(Data(providerLine.utf8))
                 }
