@@ -94,6 +94,44 @@ final class GlobAIProviderTests: XCTestCase {
         XCTAssertEqual(verifiedAt.timeIntervalSince1970, expectedBeat.timeIntervalSince1970, accuracy: 1)
     }
 
+    func testDecodeHealthSnapshotReadsCookieCaptureTime() throws {
+        let data = Data(
+            #"{"ok":true,"credentials":{"capturedAt":"2026-10-27T22:41:12.500Z","jwt":{"expiresAt":"2026-10-28T15:53:39.000Z"}},"heartbeat":{"cookieAlive":true,"lastBeat":"2026-10-27T23:47:03.090Z"},"quota":{"status":"not refreshed automatically; call GET /quota when needed"}}"#.utf8
+        )
+
+        let health = try GlobAIProvider.decodeHealthSnapshot(from: data)
+        let capturedAt = try XCTUnwrap(health.cookieCapturedAt)
+        let expected = try XCTUnwrap(Self.parseISOUTC("2026-10-27T22:41:12.500Z"))
+        XCTAssertEqual(capturedAt.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testFetchCarriesCookieCaptureTimeIntoDetails() async throws {
+        let health = Data(
+            #"{"ok":true,"credentials":{"capturedAt":"2026-10-27T22:41:12.500Z"},"heartbeat":{"cookieAlive":true,"lastBeat":"2026-10-27T23:47:03.090Z"},"quota":{"status":"not refreshed automatically; call GET /quota when needed"}}"#.utf8
+        )
+        let quota = Data(
+            #"{"ok":true,"quota":{"usedUsd":2.9655,"hardLimitUsd":50,"remainingUsd":47.03,"pct":5.93,"updatedAt":"2026-10-27T17:08:38.789Z"}}"#.utf8
+        )
+
+        let provider = GlobAIProvider(dataRequest: { request in
+            let url = try XCTUnwrap(request.url)
+            let response = try XCTUnwrap(HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            ))
+            return (url.path == "/health" ? health : quota, response)
+        })
+
+        let result = try await provider.fetch()
+
+        let capturedAt = try XCTUnwrap(result.details?.globAICookieCapturedAt)
+        let expected = try XCTUnwrap(Self.parseISOUTC("2026-10-27T22:41:12.500Z"))
+        XCTAssertEqual(capturedAt.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 1)
+        XCTAssertNotNil(result.details?.sessionVerifiedAt)
+    }
+
     func testSessionVerifiedLabelFollowsDurationRules() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -113,6 +151,26 @@ final class GlobAIProviderTests: XCTestCase {
         XCTAssertEqual(GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: now.addingTimeInterval(26 * 3600), now: now), "Bearer expires in 1d 2h")
     }
 
+    func testCookieAgeLabelFollowsDurationRules() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertNil(GlobAIQuotaSnapshot.cookieAgeLabel(capturedAt: nil, now: now))
+        XCTAssertEqual(GlobAIQuotaSnapshot.cookieAgeLabel(capturedAt: now.addingTimeInterval(-4 * 60), now: now), "Cookie: 4m old")
+        XCTAssertEqual(GlobAIQuotaSnapshot.cookieAgeLabel(capturedAt: now.addingTimeInterval(-72 * 60), now: now), "Cookie: 1h 12m old")
+        XCTAssertEqual(GlobAIQuotaSnapshot.cookieAgeLabel(capturedAt: now.addingTimeInterval(-51 * 3600), now: now), "Cookie: 2d 3h old")
+        // Clock skew that puts the capture in the future must not render a negative age.
+        XCTAssertEqual(GlobAIQuotaSnapshot.cookieAgeLabel(capturedAt: now.addingTimeInterval(120), now: now), "Cookie: 0m old")
+    }
+
+    func testCookieStaleThresholdUsesMeasuredLifetime() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        XCTAssertFalse(GlobAIQuotaSnapshot.isCookieStale(capturedAt: nil, now: now))
+        XCTAssertFalse(GlobAIQuotaSnapshot.isCookieStale(capturedAt: now.addingTimeInterval(-49 * 60), now: now))
+        XCTAssertTrue(GlobAIQuotaSnapshot.isCookieStale(capturedAt: now.addingTimeInterval(-50 * 60), now: now))
+        XCTAssertTrue(GlobAIQuotaSnapshot.isCookieStale(capturedAt: now.addingTimeInterval(-90 * 60), now: now))
+    }
+
     func testExpiredBridgeSessionIsDetectedAsConnectionFailure() {
         let data = Data(
             #"{"ok":true,"heartbeat":{"cookieAlive":false},"quota":{"usedUsd":1,"hardLimitUsd":50,"remainingUsd":49,"pct":2,"updatedAt":"2026-10-16T12:34:56Z"}}"#.utf8
@@ -125,6 +183,22 @@ final class GlobAIProviderTests: XCTestCase {
                 return
             }
             XCTAssertTrue(GlobAIProvider().shouldPauseAutomaticRefresh(after: providerError))
+        }
+    }
+
+    func testDisconnectedSessionMessageIncludesCookieAge() {
+        let data = Data(
+            #"{"ok":true,"credentials":{"capturedAt":"2026-10-16T10:00:00.000Z"},"heartbeat":{"cookieAlive":false},"quota":{"usedUsd":1,"hardLimitUsd":50,"remainingUsd":49,"pct":2,"updatedAt":"2026-10-16T12:34:56Z"}}"#.utf8
+        )
+
+        XCTAssertThrowsError(try GlobAIProvider.decodeHealthSnapshot(from: data)) { error in
+            guard let providerError = error as? ProviderError,
+                  case .networkError(let message) = providerError else {
+                XCTFail("Expected a network error, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("is disconnected (cookie captured "), message)
+            XCTAssertTrue(message.contains(" ago)"), message)
         }
     }
 

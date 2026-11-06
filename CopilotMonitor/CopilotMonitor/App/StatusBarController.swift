@@ -2485,6 +2485,7 @@ final class StatusBarController: NSObject {
             updatedAt: details?.resetPeriod,
             tokenExpiresAt: details?.tokenExpiresAt,
             sessionVerifiedAt: details?.sessionVerifiedAt,
+            cookieCapturedAt: details?.globAICookieCapturedAt,
             errorMessage: errorMessage
         )
         return item
@@ -2497,6 +2498,7 @@ final class StatusBarController: NSObject {
         updatedAt: String?,
         tokenExpiresAt: Date? = nil,
         sessionVerifiedAt: Date? = nil,
+        cookieCapturedAt: Date? = nil,
         errorMessage: String?
     ) -> NSMenu {
         let submenu = NSMenu()
@@ -2519,6 +2521,25 @@ final class StatusBarController: NSObject {
                 to: submenu,
                 icon: NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Bridge session verification")
             )
+            // The ALB cookie is the credential that actually expires (~1h);
+            // the Bearer JWT below lives 24h and the browser renews it alone.
+            if let cookieLabel = GlobAIQuotaSnapshot.cookieAgeLabel(capturedAt: cookieCapturedAt) {
+                let isStale = GlobAIQuotaSnapshot.isCookieStale(capturedAt: cookieCapturedAt)
+                addGlobAIDisabledMenuRow(
+                    cookieLabel,
+                    to: submenu,
+                    icon: NSImage(
+                        systemSymbolName: isStale ? "hourglass.badge.exclamationmark" : "hourglass",
+                        accessibilityDescription: "Session cookie age"
+                    )
+                )
+                if isStale {
+                    addGlobAIWarningRow(
+                        "Session cookie is near expiry; re-capture it in the bridge",
+                        to: submenu
+                    )
+                }
+            }
             if let tokenLabel = GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: tokenExpiresAt) {
                 addGlobAIDisabledMenuRow(
                     tokenLabel,

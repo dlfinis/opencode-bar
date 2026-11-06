@@ -284,6 +284,10 @@ struct DetailedUsage {
     // Glob.AI bridge session capture age (ALB cookie freshness)
     let sessionVerifiedAt: Date?
 
+    // Glob.AI bridge session cookie capture time. The cookie is the credential
+    // that actually expires (~1h), so its age is the real session countdown.
+    let globAICookieCapturedAt: Date?
+
     init(
         dailyUsage: Double? = nil,
         weeklyUsage: Double? = nil,
@@ -376,6 +380,7 @@ struct DetailedUsage {
         copilotQuotaResetDateUTC: Date? = nil,
         tokenExpiresAt: Date? = nil,
         sessionVerifiedAt: Date? = nil,
+        globAICookieCapturedAt: Date? = nil,
         mistralPrimaryBudgetLabel: String? = nil,
         mistralAPIBudgetLimit: Double? = nil
     ) {
@@ -470,6 +475,7 @@ struct DetailedUsage {
         self.copilotQuotaResetDateUTC = copilotQuotaResetDateUTC
         self.tokenExpiresAt = tokenExpiresAt
         self.sessionVerifiedAt = sessionVerifiedAt
+        self.globAICookieCapturedAt = globAICookieCapturedAt
         self.mistralPrimaryBudgetLabel = mistralPrimaryBudgetLabel
         self.mistralAPIBudgetLimit = mistralAPIBudgetLimit
     }
@@ -501,7 +507,7 @@ extension DetailedUsage: Codable {
         case cursorAutoUsage, cursorAutoReset, cursorApiUsage, cursorApiReset
         case copilotOverageCost, copilotOverageRequests, copilotUsedRequests, copilotLimitRequests, copilotQuotaResetDateUTC
         case tokenExpiresAt
-        case sessionVerifiedAt
+        case sessionVerifiedAt, globAICookieCapturedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -599,6 +605,7 @@ extension DetailedUsage: Codable {
         copilotQuotaResetDateUTC = try container.decodeIfPresent(Date.self, forKey: .copilotQuotaResetDateUTC)
         tokenExpiresAt = try container.decodeIfPresent(Date.self, forKey: .tokenExpiresAt)
         sessionVerifiedAt = try container.decodeIfPresent(Date.self, forKey: .sessionVerifiedAt)
+        globAICookieCapturedAt = try container.decodeIfPresent(Date.self, forKey: .globAICookieCapturedAt)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -696,6 +703,7 @@ extension DetailedUsage: Codable {
         try container.encodeIfPresent(copilotQuotaResetDateUTC, forKey: .copilotQuotaResetDateUTC)
         try container.encodeIfPresent(tokenExpiresAt, forKey: .tokenExpiresAt)
         try container.encodeIfPresent(sessionVerifiedAt, forKey: .sessionVerifiedAt)
+        try container.encodeIfPresent(globAICookieCapturedAt, forKey: .globAICookieCapturedAt)
     }
 }
 
@@ -1568,6 +1576,6 @@ extension DetailedUsage {
             || copilotUsedRequests != nil || copilotLimitRequests != nil
             || copilotQuotaResetDateUTC != nil
             || tokenExpiresAt != nil
-            || sessionVerifiedAt != nil
+            || sessionVerifiedAt != nil || globAICookieCapturedAt != nil
     }
 }

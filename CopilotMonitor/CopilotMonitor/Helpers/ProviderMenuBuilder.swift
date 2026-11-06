@@ -229,6 +229,7 @@ extension StatusBarController {
                 updatedAt: details.resetPeriod,
                 tokenExpiresAt: details.tokenExpiresAt,
                 sessionVerifiedAt: details.sessionVerifiedAt,
+                cookieCapturedAt: details.globAICookieCapturedAt,
                 errorMessage: nil
             )
 

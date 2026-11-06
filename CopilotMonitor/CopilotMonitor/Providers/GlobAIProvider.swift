@@ -75,8 +75,9 @@ struct GlobAIQuotaSnapshot: Equatable {
     /// client-readable expiry, so the capture age is the only countdown.
     static let cookieStaleAgeMinutes = 50
 
-    /// Age of the freshest session-cookie capture, or nil when unknown.
-    static func cookieAgeLabel(capturedAt: Date?, now: Date = Date()) -> String? {
+    /// Human-readable age of the freshest session-cookie capture ("7h 57m").
+    /// Shared by the menu label and the disconnected-session error message.
+    static func cookieAgeDuration(capturedAt: Date?, now: Date = Date()) -> String? {
         guard let capturedAt else { return nil }
         let totalMinutes = max(0, Int(now.timeIntervalSince(capturedAt) / 60))
         let totalHours = totalMinutes / 60
@@ -85,12 +86,18 @@ struct GlobAIQuotaSnapshot: Equatable {
         let minutes = totalMinutes % 60
 
         if days > 0 {
-            return "Cookie: \(days)d \(hours)h old"
+            return "\(days)d \(hours)h"
         }
         if totalHours > 0 {
-            return "Cookie: \(totalHours)h \(minutes)m old"
+            return "\(totalHours)h \(minutes)m"
         }
-        return "Cookie: \(minutes)m old"
+        return "\(minutes)m"
+    }
+
+    /// Age of the freshest session-cookie capture, or nil when unknown.
+    static func cookieAgeLabel(capturedAt: Date?, now: Date = Date()) -> String? {
+        guard let duration = cookieAgeDuration(capturedAt: capturedAt, now: now) else { return nil }
+        return "Cookie: \(duration) old"
     }
 
     /// True when the cookie age is near or past the measured ~1h lifetime.
@@ -239,13 +246,15 @@ final class GlobAIProvider: ProviderProtocol {
             usagePercentage: quota.usagePercentage,
             updatedAt: quota.updatedAt,
             tokenExpiresAt: health.tokenExpiresAt,
-            sessionVerifiedAt: health.sessionVerifiedAt
+            sessionVerifiedAt: health.sessionVerifiedAt,
+            cookieCapturedAt: health.cookieCapturedAt
         )
 
         let updatedLabel = snapshot.updatedAtLabel ?? "unknown"
         let tokenLabel = GlobAIQuotaSnapshot.tokenExpiryLabel(expiresAt: snapshot.tokenExpiresAt) ?? "unknown"
         let sessionLabel = GlobAIQuotaSnapshot.sessionVerifiedLabel(verifiedAt: snapshot.sessionVerifiedAt)
-        debugLog("Project quota received: USD \(String(format: "%.2f", quota.usedUSD)) of USD \(String(format: "%.2f", quota.hardLimitUSD)); updated \(updatedLabel); token \(tokenLabel); \(sessionLabel)")
+        let cookieLabel = GlobAIQuotaSnapshot.cookieAgeLabel(capturedAt: snapshot.cookieCapturedAt) ?? "unknown"
+        debugLog("Project quota received: USD \(String(format: "%.2f", quota.usedUSD)) of USD \(String(format: "%.2f", quota.hardLimitUSD)); updated \(updatedLabel); token \(tokenLabel); \(sessionLabel); \(cookieLabel)")
 
         let details = DetailedUsage(
             monthlyUsage: quota.usagePercentage,
@@ -254,7 +263,8 @@ final class GlobAIProvider: ProviderProtocol {
             resetPeriod: quota.updatedAtLabel,
             monthlyCost: quota.usedUSD,
             tokenExpiresAt: snapshot.tokenExpiresAt,
-            sessionVerifiedAt: snapshot.sessionVerifiedAt
+            sessionVerifiedAt: snapshot.sessionVerifiedAt,
+            globAICookieCapturedAt: snapshot.cookieCapturedAt
         )
 
         return ProviderResult(
@@ -311,13 +321,21 @@ final class GlobAIProvider: ProviderProtocol {
         guard health.ok == true else {
             throw ProviderError.networkError("The local Glob.AI OS bridge reports that it is unavailable.")
         }
-        guard health.heartbeat?.cookieAlive != false else {
-            throw ProviderError.networkError("The Glob.AI OS session is disconnected. Restore the bridge session, then select Refresh.")
-        }
 
         let tokenExpiresAt = health.credentials?.jwt.flatMap { Self.parseUpdatedAt($0.expiresAt) }
         let sessionVerifiedAt = health.heartbeat.flatMap { Self.parseUpdatedAt($0.lastBeat) }
         let cookieCapturedAt = health.credentials?.capturedAt.flatMap { Self.parseUpdatedAt($0) }
+
+        guard health.heartbeat?.cookieAlive != false else {
+            // Surface the cookie age here: a dead session is exactly when the
+            // countdown matters, and the submenu never renders without quota.
+            let ageNote = GlobAIQuotaSnapshot.cookieAgeDuration(capturedAt: cookieCapturedAt)
+                .map { " (cookie captured \($0) ago)" } ?? ""
+            throw ProviderError.networkError(
+                "The Glob.AI OS session is disconnected\(ageNote). Restore the bridge session, then select Refresh."
+            )
+        }
+
         let quota = try Self.measuredQuota(from: health.quota)
         return GlobAIHealthSnapshot(
             quota: quota,
