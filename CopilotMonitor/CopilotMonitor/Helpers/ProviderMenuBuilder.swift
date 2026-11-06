@@ -96,6 +96,124 @@ extension StatusBarController {
                 }
             }
 
+        case .mistral:
+            // Mistral reports an organization budget per billing period. The
+            // Vibe budget is the primary quota (coding assistant usage); the
+            // API budget is the secondary window. Both are rendered with the
+            // reported currency instead of the generic USD-only rows.
+            let currencySymbol = details.balanceCurrencySymbol
+            let primaryLabel = details.mistralPrimaryBudgetLabel ?? "Budget"
+            let primaryPercent: Double? = {
+                guard let used = details.monthlyUsage,
+                      let limit = details.limit,
+                      limit > 0 else { return nil }
+                return min(max((used / limit) * 100.0, 0), 100)
+            }()
+
+            if let primaryPercent {
+                createUsageWindowRow(
+                    label: primaryLabel,
+                    usagePercent: primaryPercent,
+                    resetDate: details.primaryReset,
+                    isMonthly: true,
+                    percentText: Self.subOnePercentText(primaryPercent)
+                ).forEach { submenu.addItem($0) }
+            }
+
+            if let used = details.monthlyUsage, let limit = details.limit {
+                let usedItem = NSMenuItem()
+                usedItem.view = createDisabledLabelView(
+                    text: String(format: "Used: %@%.2f / %@%.2f", currencySymbol, used, currencySymbol, limit),
+                    icon: NSImage(systemSymbolName: "chart.bar", accessibilityDescription: "Budget Used")
+                )
+                submenu.addItem(usedItem)
+
+                let remaining = details.limitRemaining ?? max(0, limit - used)
+                let remainingItem = NSMenuItem()
+                remainingItem.view = createDisabledLabelView(
+                    text: String(format: "Remaining: %@%.2f", currencySymbol, remaining),
+                    icon: NSImage(systemSymbolName: "creditcard", accessibilityDescription: "Budget Remaining")
+                )
+                submenu.addItem(remainingItem)
+            }
+
+            if let apiPercent = details.secondaryUsage {
+                submenu.addItem(NSMenuItem.separator())
+                createUsageWindowRow(
+                    label: "API Budget",
+                    usagePercent: apiPercent,
+                    resetDate: details.secondaryReset,
+                    isMonthly: true,
+                    percentText: Self.subOnePercentText(apiPercent)
+                ).forEach { submenu.addItem($0) }
+
+                if let apiLimit = details.mistralAPIBudgetLimit, apiLimit > 0 {
+                    let apiUsed = apiLimit * apiPercent / 100.0
+                    let apiRemaining = max(0, apiLimit - apiUsed)
+
+                    let apiUsedItem = NSMenuItem()
+                    apiUsedItem.view = createDisabledLabelView(
+                        text: String(format: "Used: %@%.2f / %@%.2f", currencySymbol, apiUsed, currencySymbol, apiLimit),
+                        icon: NSImage(systemSymbolName: "chart.bar", accessibilityDescription: "API Budget Used")
+                    )
+                    submenu.addItem(apiUsedItem)
+
+                    let apiRemainingItem = NSMenuItem()
+                    apiRemainingItem.view = createDisabledLabelView(
+                        text: String(format: "Remaining: %@%.2f", currencySymbol, apiRemaining),
+                        icon: NSImage(systemSymbolName: "creditcard", accessibilityDescription: "API Budget Remaining")
+                    )
+                    submenu.addItem(apiRemainingItem)
+                }
+            }
+
+            let trimmedEmail = details.email?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let trimmedPlan = details.planType?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let trimmedSummary = details.authUsageSummary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedEmail.isEmpty || !trimmedPlan.isEmpty || !trimmedSummary.isEmpty {
+                submenu.addItem(NSMenuItem.separator())
+            }
+
+            if !trimmedEmail.isEmpty {
+                let emailItem = NSMenuItem()
+                emailItem.view = createDisabledLabelView(
+                    text: "Email: \(trimmedEmail)",
+                    icon: NSImage(systemSymbolName: "person.circle", accessibilityDescription: "User Email")
+                )
+                submenu.addItem(emailItem)
+            }
+
+            if !trimmedPlan.isEmpty {
+                let planItem = NSMenuItem()
+                planItem.view = createDisabledLabelView(
+                    text: "Plan: \(trimmedPlan)",
+                    icon: NSImage(systemSymbolName: "person.crop.circle", accessibilityDescription: "Plan")
+                )
+                submenu.addItem(planItem)
+            }
+
+            if !trimmedSummary.isEmpty {
+                let summaryItem = NSMenuItem()
+                summaryItem.view = createDisabledLabelView(
+                    text: trimmedSummary,
+                    icon: NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Billing Mode")
+                )
+                submenu.addItem(summaryItem)
+            }
+
+            if let authSource = details.authSource, !authSource.isEmpty {
+                submenu.addItem(NSMenuItem.separator())
+                let authItem = NSMenuItem()
+                authItem.view = createDisabledLabelView(
+                    text: "Token From: \(authSource)",
+                    icon: NSImage(systemSymbolName: "key", accessibilityDescription: "Auth Source"),
+                    multiline: true
+                )
+                submenu.addItem(authItem)
+            }
+
+            return submenu
+
         case .openRouter:
             if let remaining = details.creditsRemaining {
                 let item = NSMenuItem()
@@ -519,29 +637,6 @@ extension StatusBarController {
             }
 
             addSubscriptionItems(to: submenu, provider: .cursor, accountId: subscriptionAccountId)
-
-        case .geminiCLI:
-            // modelBreakdown stores remaining% — convert to used% at display layer
-            if let models = details.modelBreakdown, !models.isEmpty {
-                addGroupedModelUsageSection(
-                    to: submenu,
-                    modelBreakdown: models,
-                    modelResetTimes: details.modelResetTimes,
-                    paceWindowHours: 24,
-                    debugContext: "createDetailSubmenu(gemini_cli \(details.email ?? "unknown"))"
-                )
-            }
-            if let email = details.email {
-                submenu.addItem(NSMenuItem.separator())
-                let item = NSMenuItem()
-                item.view = createDisabledLabelView(
-                    text: "Email: \(email)",
-                    icon: NSImage(systemSymbolName: "person.circle", accessibilityDescription: "User Email")
-                )
-                submenu.addItem(item)
-            }
-
-            addSubscriptionItems(to: submenu, provider: .geminiCLI, accountId: subscriptionAccountId)
 
         case .antigravity:
             // modelBreakdown stores remaining% — convert to used% at display layer
@@ -1076,6 +1171,13 @@ extension StatusBarController {
         return submenu
     }
 
+    /// Sub-1% usage is real usage, but the shared formatter floors it to "1%"
+    /// so small movements stay visible. Budgets use two decimals instead.
+    private static func subOnePercentText(_ percent: Double) -> String? {
+        guard percent > 0, percent < 1 else { return nil }
+        return String(format: "%.2f%%", percent)
+    }
+
     /// Label/value pairs for the DeepSeek balance detail rows, in display
     /// order. Extracted as a pure function so the menu rows are testable
     /// without instantiating StatusBarController.
@@ -1407,36 +1509,6 @@ extension StatusBarController {
                 addHorizontalDivider(to: submenu)
             }
         }
-    }
-
-    func createGeminiAccountSubmenu(_ account: GeminiAccountQuota) -> NSMenu {
-        let submenu = NSMenu()
-
-        addGroupedModelUsageSection(
-            to: submenu,
-            modelBreakdown: account.modelBreakdown,
-            modelResetTimes: account.modelResetTimes,
-            paceWindowHours: 24,
-            debugContext: "createGeminiAccountSubmenu(\(account.email))"
-        )
-
-        var accountItems: [(sfSymbol: String, text: String)] = [
-            (sfSymbol: "person.circle", text: "Email: \(account.email)"),
-            (sfSymbol: "key", text: "Token From: \(account.authSource)")
-        ]
-        if let accountId = account.accountId, !accountId.isEmpty {
-            accountItems.insert((sfSymbol: "number.circle", text: "Account ID: \(accountId)"), at: 1)
-        }
-        if let authUsageSummary = account.authUsageSummary, !authUsageSummary.isEmpty {
-            accountItems.append((sfSymbol: "arrow.triangle.branch", text: "Using in: \(authUsageSummary)"))
-        }
-        createAccountInfoSection(items: accountItems).forEach { submenu.addItem($0) }
-
-        let emailNormalized = account.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let subscriptionAccountId = emailNormalized.isEmpty ? account.accountId : emailNormalized
-        addSubscriptionItems(to: submenu, provider: .geminiCLI, accountId: subscriptionAccountId)
-
-        return submenu
     }
 
     func addSubscriptionItems(to submenu: NSMenu, provider: ProviderIdentifier, accountId: String? = nil) {
@@ -1920,7 +1992,12 @@ extension StatusBarController {
         return .systemGreen
     }
 
-    func createUsageSummaryView(label: String, usagePercent: Double, valueColor: NSColor) -> NSView {
+    func createUsageSummaryView(
+        label: String,
+        usagePercent: Double,
+        valueColor: NSColor,
+        percentText: String? = nil
+    ) -> NSView {
         let menuWidth: CGFloat = MenuDesignToken.Dimension.menuWidth
         let itemHeight: CGFloat = MenuDesignToken.Dimension.itemHeight
         let leadingOffset: CGFloat = MenuDesignToken.Spacing.leadingOffset
@@ -1946,7 +2023,7 @@ extension StatusBarController {
             attributes: [.font: NSFont.boldSystemFont(ofSize: headerFontSize), .foregroundColor: NSColor.disabledControlTextColor]
         ))
         rightAttributedString.append(NSAttributedString(
-            string: UsagePercentDisplayFormatter.string(from: usagePercent),
+            string: percentText ?? UsagePercentDisplayFormatter.string(from: usagePercent),
             attributes: [.font: NSFont.boldSystemFont(ofSize: headerFontSize), .foregroundColor: valueColor]
         ))
         rightTextField.attributedStringValue = rightAttributedString
@@ -1979,7 +2056,8 @@ extension StatusBarController {
         usagePercent: Double,
         resetDate: Date? = nil,
         windowHours: Int? = nil,
-        isMonthly: Bool = false
+        isMonthly: Bool = false,
+        percentText: String? = nil
     ) -> [NSMenuItem] {
         var items: [NSMenuItem] = []
 
@@ -2000,7 +2078,12 @@ extension StatusBarController {
         debugLog("createUsageWindowRow: usage row \(label) = \(usagePercent)%")
 
         let usageItem = NSMenuItem()
-        usageItem.view = createUsageSummaryView(label: label, usagePercent: usagePercent, valueColor: usageColor)
+        usageItem.view = createUsageSummaryView(
+            label: label,
+            usagePercent: usagePercent,
+            valueColor: usageColor,
+            percentText: percentText
+        )
         items.append(usageItem)
 
         guard let resetDate = resetDate else {

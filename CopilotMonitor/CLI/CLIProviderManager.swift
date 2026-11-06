@@ -13,12 +13,13 @@ actor CLIProviderManager {
     private let fetchTimeout: TimeInterval = 10.0
     
     static let registeredProviders: [ProviderIdentifier] = [
-        .claude, .codex, .commandCode, .cursor, .geminiCLI, .openRouter,
+        .claude, .codex, .commandCode, .cursor, .openRouter,
         .antigravity, .openCodeZen, .openCodeGo, .kiro, .grok, .kimi, .minimaxCodingPlan, .zaiCodingPlan,
         .nanoGpt,
         .chutes, .copilot,
         .synthetic,
-        .deepSeek
+        .deepSeek,
+        .mistral
     ]
     
     // MARK: - Initialization
@@ -30,7 +31,6 @@ actor CLIProviderManager {
         let codexProvider = CodexProvider()
         let commandCodeProvider = CommandCodeProvider()
         let cursorProvider = CursorProvider()
-        let geminiCLIProvider = GeminiCLIProvider()
         let openRouterProvider = OpenRouterProvider()
         let antigravityProvider = AntigravityProvider()
         let openCodeZenProvider = OpenCodeZenProvider()
@@ -44,6 +44,7 @@ actor CLIProviderManager {
         let chutesProvider = ChutesProvider()
         let syntheticProvider = SyntheticProvider()
         let deepSeekProvider = DeepSeekProvider()
+        let mistralProvider = MistralProvider()
 
         // 1 CLI-specific provider (uses browser cookies instead of WebView)
         let copilotCLIProvider = CopilotCLIProvider()
@@ -53,7 +54,6 @@ actor CLIProviderManager {
             codexProvider,
             commandCodeProvider,
             cursorProvider,
-            geminiCLIProvider,
             openRouterProvider,
             antigravityProvider,
             openCodeZenProvider,
@@ -67,7 +67,8 @@ actor CLIProviderManager {
             chutesProvider,
             copilotCLIProvider,
             syntheticProvider,
-            deepSeekProvider
+            deepSeekProvider,
+            mistralProvider
         ]
 
         let providerCount = providers.count

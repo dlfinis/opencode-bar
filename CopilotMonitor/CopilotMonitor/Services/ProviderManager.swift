@@ -32,7 +32,6 @@ actor ProviderManager {
             CodexProvider(),
             CommandCodeProvider(),
             CursorProvider(),
-            GeminiCLIProvider(),
             MiniMaxProvider(),
             ZaiCodingPlanProvider(),
             NanoGptProvider(),
@@ -48,6 +47,7 @@ actor ProviderManager {
             TavilySearchProvider(),
             BraveSearchProvider(),
             DeepSeekProvider(),
+            MistralProvider(),
             GlobAIProvider()
         ]
     }

@@ -45,10 +45,10 @@ Download the latest `.dmg` file from the [**Releases**](https://github.com/opggi
 | **GitHub Copilot Add-on** | Pay-as-you-go | Usage-based billing after exceeding quota |
 | **Claude** | Quota-based | 5h/7d usage windows, Sonnet/Opus breakdown |
 | **Codex** | Quota-based | Primary/Secondary quotas, plan type |
-| **Gemini CLI** | Quota-based | Per-model quotas, multi-account support with email labels and account ID details |
 | **Nano-GPT** | Quota-based | Weekly input tokens quota, USD/NANO balance |
 | **Kimi for Coding (Kimi K2.5)** | Quota-based | Usage limits, membership level, reset time |
 | **MiniMax Coding Plan** | Quota-based | 5h/weekly quotas, Anthropic-style dual-window submenu, OpenCode auth |
+| **Mistral** | Quota-based | Vibe/API budget usage, currency, reset time |
 | **OpenCode Go** | Quota-based | 5h/weekly/monthly usage windows, model API validation, OpenCode auth |
 | **Grok** | Quota-based | Monthly usage, reset time, email-scoped subscription settings, local session tokens |
 | **Z.AI Coding Plan** | Quota-based | Token/MCP and Lite session/weekly quotas, model usage, tool usage (24h) |
@@ -67,7 +67,7 @@ Download the latest `.dmg` file from the [**Releases**](https://github.com/opggi
 - **Antigravity/Gemini**
   - `NoeFabris/opencode-antigravity-auth` (writes `~/.config/opencode/antigravity-accounts.json`)
   - `jenslys/opencode-gemini-auth` (writes `google.oauth` in OpenCode `auth.json`)
-  - Gemini CLI OAuth creds (writes `~/.gemini/oauth_creds.json` for email/account ID metadata; overlaps are merged with Antigravity accounts)
+  - Gemini OAuth creds (writes `~/.gemini/oauth_creds.json` for email/account ID metadata; overlaps are merged with Antigravity accounts)
 - **Claude**: `anomalyco/opencode-anthropic-auth`
 
 ### Standalone tools
@@ -113,7 +113,6 @@ documented authentication or network error exit code if that request fails.
 - **Visual Indicators**: Color-coded progress (green → yellow → orange → red)
 - **Detailed Submenus**: Click any provider for in-depth metrics
 - **Auth Source Labels**: See where each account token was detected (OpenCode, VS Code, Keychain, etc.)
-- **Gemini Account Labels**: Shows `Gemini CLI (email)` when email is available, with fallback to `Gemini CLI #N`
 
 ### Usage History & Predictions
 - **Daily Tracking**: View request counts and overage costs
@@ -210,8 +209,6 @@ Claude                Quota-based      77%         23/100 remaining
 Codex                 Quota-based      0%          100/100 remaining
 Copilot (user1)       Quota-based      45%         550/1000 remaining
 Copilot (user2)       Quota-based      12%         880/1000 remaining
-Gemini CLI (user1@gmail.com) Quota-based      0%          100% remaining
-Gemini CLI (user2@company.com) Quota-based    15%         85% remaining
 Kimi for Coding       Quota-based      26%         74/100 remaining
 MiniMax Coding Plan   Quota-based      0%,0%      100/100 remaining
 OpenCode Go           Quota-based      12%,25%,50% 50/100 remaining
@@ -345,7 +342,6 @@ Quota Status: $219/m
   Codex            100%      ▸
   MiniMax Coding Plan 0%, 0% ▸
   Z.AI Coding Plan 99%       ▸
-  Gemini CLI (user1@gmail.com) 100% ▸
 ─────────────────────────────
 Predicted EOM: $451
 ─────────────────────────────

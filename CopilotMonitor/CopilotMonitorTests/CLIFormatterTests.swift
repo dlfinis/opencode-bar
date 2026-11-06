@@ -8,7 +8,6 @@ final class CLIFormatterTests: XCTestCase {
     func testProviderIdentifierRawValues() {
         XCTAssertEqual(ProviderIdentifier.openRouter.rawValue, "openrouter")
         XCTAssertEqual(ProviderIdentifier.openCodeZen.rawValue, "opencode_zen")
-        XCTAssertEqual(ProviderIdentifier.geminiCLI.rawValue, "gemini_cli")
         XCTAssertEqual(ProviderIdentifier.claude.rawValue, "claude")
         XCTAssertEqual(ProviderIdentifier.codex.rawValue, "codex")
         XCTAssertEqual(ProviderIdentifier.kimi.rawValue, "kimi")
@@ -21,7 +20,6 @@ final class CLIFormatterTests: XCTestCase {
     func testProviderIdentifierDisplayNames() {
         XCTAssertEqual(ProviderIdentifier.openRouter.displayName, "OpenRouter")
         XCTAssertEqual(ProviderIdentifier.openCodeZen.displayName, "OpenCode Zen")
-        XCTAssertEqual(ProviderIdentifier.geminiCLI.displayName, "Gemini CLI")
         XCTAssertEqual(ProviderIdentifier.claude.displayName, "Claude")
         XCTAssertEqual(ProviderIdentifier.kimi.displayName, "Kimi for Coding")
         XCTAssertEqual(ProviderIdentifier.minimaxCodingPlan.displayName, "MiniMax Coding Plan")
@@ -402,32 +400,6 @@ final class CLIFormatterTests: XCTestCase {
                       "Absolute path should be shortened: got\n\(output)")
     }
 
-    // MARK: Gemini multi-account separator width
-
-    func testTableFormatterSeparatorWidthGeminiMultiAccount() {
-        let accounts = [
-            GeminiAccountQuota(accountIndex: 0, email: "user1@gmail.com", accountId: "sub-abc", remainingPercentage: 80, modelBreakdown: [:], authSource: "test", earliestReset: nil, modelResetTimes: [:]),
-            GeminiAccountQuota(accountIndex: 1, email: "a-very-long-user@example.com", accountId: "sub-xyz", remainingPercentage: 60, modelBreakdown: [:], authSource: "test", earliestReset: nil, modelResetTimes: [:])
-        ]
-        let details = DetailedUsage(geminiAccounts: accounts)
-        let usage = ProviderUsage.quotaBased(remaining: 60, entitlement: 100, overagePermitted: false)
-        let result = ProviderResult(usage: usage, details: details)
-
-        let output = TableFormatter.format([.geminiCLI: result])
-        let lines = output.components(separatedBy: "\n")
-        guard lines.count >= 2 else {
-            XCTFail("Expected at least 2 lines in table output")
-            return
-        }
-
-        let separator = lines[1]
-        let dataRows = lines.dropFirst(2).filter { !$0.isEmpty }
-
-        for row in dataRows {
-            XCTAssertLessThanOrEqual(row.count, separator.count,
-                                     "Separator must be at least as wide as every data row. Row: \(row)")
-        }
-    }
     // MARK: - Z.AI CREDIT_LIMIT (lite tier) formatter tests
 
     private func zaiCreditOnlyResult() -> ProviderResult {

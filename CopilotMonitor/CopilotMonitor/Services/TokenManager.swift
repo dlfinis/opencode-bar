@@ -226,9 +226,13 @@ struct OpenCodeAuth: Codable {
     let nanoGpt: APIKey?
     let synthetic: APIKey?
     let chutes: APIKey?
+    let mistral: APIKey?
+    /// Google OAuth payload used by the Gemini auth plugin. Stored under the
+    /// `google` key in both `auth.json` and the v2 credential store.
+    let google: GeminiOAuthAuth?
 
     enum CodingKeys: String, CodingKey {
-        case anthropic, openai, openrouter, opencode, synthetic, chutes, deepseek
+        case anthropic, openai, openrouter, opencode, synthetic, chutes, deepseek, mistral, google
         case openCodeGo = "opencode-go"
         case githubCopilot = "github-copilot"
         case kimiForCoding = "kimi-for-coding"
@@ -251,7 +255,9 @@ struct OpenCodeAuth: Codable {
         zaiCodingPlan: APIKey?,
         nanoGpt: APIKey?,
         synthetic: APIKey?,
-        chutes: APIKey? = nil
+        chutes: APIKey? = nil,
+        mistral: APIKey? = nil,
+        google: GeminiOAuthAuth? = nil
     ) {
         self.anthropic = anthropic
         self.openai = openai
@@ -267,6 +273,8 @@ struct OpenCodeAuth: Codable {
         self.nanoGpt = nanoGpt
         self.synthetic = synthetic
         self.chutes = chutes
+        self.mistral = mistral
+        self.google = google
     }
 
     init(from decoder: Decoder) throws {
@@ -288,6 +296,8 @@ struct OpenCodeAuth: Codable {
         nanoGpt = Self.decodeLossyIfPresent(APIKey.self, from: container, forKey: .nanoGpt)
         synthetic = Self.decodeLossyIfPresent(APIKey.self, from: container, forKey: .synthetic)
         chutes = Self.decodeLossyIfPresent(APIKey.self, from: container, forKey: .chutes)
+        mistral = Self.decodeLossyIfPresent(APIKey.self, from: container, forKey: .mistral)
+        google = Self.decodeLossyIfPresent(GeminiOAuthAuth.self, from: container, forKey: .google)
 
         if anthropic == nil,
            openai == nil,
@@ -302,7 +312,9 @@ struct OpenCodeAuth: Codable {
            zaiCodingPlan == nil,
            nanoGpt == nil,
            synthetic == nil,
-           chutes == nil {
+           chutes == nil,
+           mistral == nil,
+           google == nil {
             throw DecodingError.dataCorrupted(
                 DecodingError.Context(
                     codingPath: container.codingPath,
@@ -341,6 +353,8 @@ struct OpenCodeAuth: Codable {
         try container.encodeIfPresent(nanoGpt, forKey: .nanoGpt)
         try container.encodeIfPresent(synthetic, forKey: .synthetic)
         try container.encodeIfPresent(chutes, forKey: .chutes)
+        try container.encodeIfPresent(mistral, forKey: .mistral)
+        try container.encodeIfPresent(google, forKey: .google)
     }
 }
 
@@ -706,13 +720,9 @@ enum GeminiOAuthRetryPolicy {
     }
 }
 
-/// Minimal OpenCode auth payload for jenslys/opencode-gemini-auth stored under "google"
-struct OpenCodeGeminiAuthContainer: Decodable {
-    let google: GeminiOAuthAuth?
-}
-
-/// Gemini OAuth payload as stored in OpenCode auth.json
-struct GeminiOAuthAuth: Decodable {
+/// Gemini OAuth payload as stored under `google` in OpenCode auth.json and the
+/// v2 credential store
+struct GeminiOAuthAuth: Codable {
     let type: String?
     let refresh: String?
     let access: String?
@@ -881,11 +891,7 @@ final class TokenManager: @unchecked Sendable {
     private var cachedAntigravityAccounts: AntigravityAccounts?
     private var antigravityCacheTimestamp: Date?
     
-    /// Cached Gemini OAuth auth payload (OpenCode auth.json)
-    private var cachedGeminiOAuthAuth: GeminiOAuthAuth?
-    private var geminiOAuthCacheTimestamp: Date?
-
-    /// Path where Gemini OAuth auth was found (OpenCode auth.json)
+    /// Path where the Gemini OAuth auth was found (credential store or auth.json)
     private(set) var lastFoundGeminiOAuthPath: URL?
 
     /// Cached Gemini OAuth creds payload (~/.gemini/oauth_creds.json)
@@ -983,6 +989,23 @@ final class TokenManager: @unchecked Sendable {
             fallbackRelativePathComponents: [
                 [".local", "share", "opencode", "auth.json"],
                 ["Library", "Application Support", "opencode", "auth.json"]
+            ]
+        )
+    }
+
+    /// Possible OpenCode credential database locations in priority order.
+    /// OpenCode v2 stores provider credentials in `opencode.db` instead of
+    /// `auth.json`.
+    /// 1. $XDG_DATA_HOME/opencode/opencode.db (if XDG_DATA_HOME is set)
+    /// 2. ~/.local/share/opencode/opencode.db (XDG default, used by OpenCode)
+    /// 3. ~/Library/Application Support/opencode/opencode.db (macOS fallback)
+    func getOpenCodeDatabasePaths() -> [URL] {
+        buildOpenCodeFilePaths(
+            envVarName: "XDG_DATA_HOME",
+            envRelativePathComponents: ["opencode", "opencode.db"],
+            fallbackRelativePathComponents: [
+                [".local", "share", "opencode", "opencode.db"],
+                ["Library", "Application Support", "opencode", "opencode.db"]
             ]
         )
     }
@@ -1366,11 +1389,31 @@ final class TokenManager: @unchecked Sendable {
         return nil
     }
 
-    /// Returns the path where auth.json was found, or nil if not found
+    /// Returns the path where OpenCode credentials were found, or nil.
+    /// Points at `opencode.db` when the v2 credential store contributed data,
+    /// otherwise at the legacy `auth.json`.
     /// Useful for displaying in UI to help users troubleshoot
     private(set) var lastFoundAuthPath: URL?
 
-    /// Thread-safe read of OpenCode auth tokens with caching
+    /// Test hook: disables the OpenCode v2 credential store so `auth.json`
+    /// fixtures are not overridden by the developer's real `opencode.db`.
+    private var openCodeCredentialStoreDisabled = false
+
+    /// Enables or disables the OpenCode v2 credential store for tests.
+    func setOpenCodeCredentialStoreEnabledForTesting(_ enabled: Bool) {
+        queue.sync {
+            openCodeCredentialStoreDisabled = !enabled
+            cachedAuth = nil
+            cacheTimestamp = nil
+        }
+    }
+
+    /// Thread-safe read of OpenCode credentials with caching.
+    ///
+    /// OpenCode v2 stores credentials in the `credential` table of
+    /// `opencode.db`; `auth.json` is the legacy store. Both are merged here so
+    /// every provider getter keeps working unchanged, with the database taking
+    /// precedence over stale `auth.json` entries.
     func readOpenCodeAuth() -> OpenCodeAuth? {
         return queue.sync {
             // Return cached data if still valid
@@ -1379,11 +1422,13 @@ final class TokenManager: @unchecked Sendable {
                Date().timeIntervalSince(timestamp) < cacheValiditySeconds {
                 return cached
             }
-            
+
             let fileManager = FileManager.default
-            let paths = getAuthFilePaths()
-            
-            for authPath in paths {
+            var merged: [String: Any] = [:]
+            var authFileURL: URL?
+
+            // Legacy store first: auth.json
+            for authPath in getAuthFilePaths() {
                 guard fileManager.fileExists(atPath: authPath.path) else {
                     continue
                 }
@@ -1391,26 +1436,59 @@ final class TokenManager: @unchecked Sendable {
                     logger.warning("Auth file not readable at \(authPath.path)")
                     continue
                 }
-                
+
                 do {
                     let data = try Data(contentsOf: authPath)
-                    let auth = try JSONDecoder().decode(OpenCodeAuth.self, from: data)
-                    lastFoundAuthPath = authPath
-                    cachedAuth = auth
-                    cacheTimestamp = Date()
-                    logger.info("Successfully loaded OpenCode auth from: \(authPath.path)")
-                    return auth
+                    guard let dictionary = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        logger.warning("Auth file is not a JSON object at \(authPath.path)")
+                        continue
+                    }
+                    merged = dictionary
+                    authFileURL = authPath
+                    break
                 } catch {
                     logger.warning("Failed to parse auth at \(authPath.path): \(error.localizedDescription)")
                     continue
                 }
             }
-            
-            lastFoundAuthPath = nil
-            cachedAuth = nil
-            cacheTimestamp = nil
-            logger.error("No valid auth.json found in any location")
-            return nil
+
+            // Current store: OpenCode v2 credential database
+            var databaseURL: URL?
+            if !openCodeCredentialStoreDisabled, let store = readOpenCodeCredentialStore() {
+                for (integrationID, rawValue) in store.credentials {
+                    guard let data = rawValue.data(using: .utf8),
+                          let object = try? JSONSerialization.jsonObject(with: data) else {
+                        logger.warning("Skipping unparseable credential for \(integrationID)")
+                        continue
+                    }
+                    merged[integrationID] = object
+                }
+                databaseURL = store.databaseURL
+            }
+
+            guard !merged.isEmpty else {
+                lastFoundAuthPath = nil
+                cachedAuth = nil
+                cacheTimestamp = nil
+                logger.error("No OpenCode credentials found in auth.json or the credential store")
+                return nil
+            }
+
+            do {
+                let data = try JSONSerialization.data(withJSONObject: merged)
+                let auth = try JSONDecoder().decode(OpenCodeAuth.self, from: data)
+                lastFoundAuthPath = databaseURL ?? authFileURL
+                cachedAuth = auth
+                cacheTimestamp = Date()
+                logger.info("Loaded OpenCode credentials from: \(self.lastFoundAuthPath?.path ?? "unknown source")")
+                return auth
+            } catch {
+                logger.error("Failed to build OpenCode credentials: \(error.localizedDescription)")
+                lastFoundAuthPath = nil
+                cachedAuth = nil
+                cacheTimestamp = nil
+                return nil
+            }
         }
     }
 
@@ -3923,54 +4001,30 @@ final class TokenManager: @unchecked Sendable {
         return (TokenManager.geminiClientId, TokenManager.geminiClientSecret)
     }
 
-    /// Thread-safe read of Gemini OAuth auth stored under "google" in OpenCode auth.json (jenslys/opencode-gemini-auth)
+    /// Thread-safe read of the Gemini OAuth payload stored under `google`.
+    ///
+    /// The payload comes from the merged OpenCode credentials, so it is
+    /// resolved from the v2 `opencode.db` credential store first and from the
+    /// legacy `auth.json` second.
     func readGeminiOAuthAuth() -> GeminiOAuthAuth? {
-        return queue.sync {
-            if let cached = cachedGeminiOAuthAuth,
-               let timestamp = geminiOAuthCacheTimestamp,
-               Date().timeIntervalSince(timestamp) < cacheValiditySeconds {
-                return cached
-            }
-
-            let fileManager = FileManager.default
-            let paths = getAuthFilePaths()
-
-            for authPath in paths {
-                guard fileManager.fileExists(atPath: authPath.path) else {
-                    continue
-                }
-
-                do {
-                    let data = try Data(contentsOf: authPath)
-                    let container = try JSONDecoder().decode(OpenCodeGeminiAuthContainer.self, from: data)
-                    guard let geminiAuth = container.google else {
-                        continue
-                    }
-                    guard geminiAuth.type?.lowercased() == "oauth" else {
-                        continue
-                    }
-                    let refresh = geminiAuth.refresh?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    guard !refresh.isEmpty else {
-                        logger.warning("Gemini OAuth entry exists but refresh token is empty in \(authPath.path)")
-                        continue
-                    }
-
-                    lastFoundGeminiOAuthPath = authPath
-                    cachedGeminiOAuthAuth = geminiAuth
-                    geminiOAuthCacheTimestamp = Date()
-                    logger.info("Successfully loaded Gemini OAuth auth from: \(authPath.path)")
-                    return geminiAuth
-                } catch {
-                    logger.warning("Failed to parse Gemini OAuth auth at \(authPath.path): \(error.localizedDescription)")
-                    continue
-                }
-            }
-
+        guard let geminiAuth = readOpenCodeAuth()?.google else {
             lastFoundGeminiOAuthPath = nil
-            cachedGeminiOAuthAuth = nil
-            geminiOAuthCacheTimestamp = nil
             return nil
         }
+        guard geminiAuth.type?.lowercased() == "oauth" else {
+            lastFoundGeminiOAuthPath = nil
+            return nil
+        }
+        let refresh = geminiAuth.refresh?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !refresh.isEmpty else {
+            logger.warning("Gemini OAuth entry exists but the refresh token is empty")
+            lastFoundGeminiOAuthPath = nil
+            return nil
+        }
+
+        lastFoundGeminiOAuthPath = lastFoundAuthPath
+        logger.info("Loaded Gemini OAuth auth from: \(self.lastFoundGeminiOAuthPath?.path ?? "OpenCode credentials")")
+        return geminiAuth
     }
 
     private func geminiOAuthCredsPath() -> URL {
@@ -4298,6 +4352,105 @@ final class TokenManager: @unchecked Sendable {
     func getDeepSeekAPIKey() -> String? {
         guard let auth = readOpenCodeAuth() else { return nil }
         return auth.deepseek?.key
+    }
+
+    /// Resolves the Mistral API key and the source it came from.
+    ///
+    /// OpenCode credentials (legacy `auth.json` or the v2 `opencode.db`
+    /// credential store) take precedence, then `opencode.json`
+    /// (`provider.mistral.options.apiKey`), then `MISTRAL_API_KEY`.
+    /// - Returns: The API key plus a human-readable source label, or nil.
+    func getMistralAPIKeyWithSource() -> (key: String, source: String)? {
+        if let key = readOpenCodeAuth()?.mistral?.key.trimmingCharacters(in: .whitespacesAndNewlines),
+           !key.isEmpty {
+            return (key, lastFoundAuthPath?.path ?? "OpenCode credential store")
+        }
+
+        if let config = readOpenCodeConfigJSON(),
+           let key = nestedString(in: config, path: ["provider", "mistral", "options", "apiKey"])?
+               .trimmingCharacters(in: .whitespacesAndNewlines),
+           !key.isEmpty {
+            return (key, lastFoundOpenCodeConfigPath?.path ?? "opencode.json")
+        }
+
+        if let key = ProcessInfo.processInfo.environment["MISTRAL_API_KEY"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !key.isEmpty {
+            return (key, "MISTRAL_API_KEY")
+        }
+
+        return nil
+    }
+
+    /// Gets Mistral API key from the resolved credential sources.
+    func getMistralAPIKey() -> String? {
+        getMistralAPIKeyWithSource()?.key
+    }
+
+    private struct OpenCodeCredentialStore {
+        let databaseURL: URL
+        let credentials: [String: String]
+    }
+
+    /// Reads every active credential from the OpenCode v2 SQLite store.
+    ///
+    /// The database belongs to OpenCode and runs in WAL mode, so it is opened
+    /// read-only and never modified. The query touches only the small
+    /// `credential` table; the multi-gigabyte history tables are never scanned.
+    /// - Returns: The database path and a map of integration ID to raw JSON
+    ///   credential payload, or nil when no store is available.
+    private func readOpenCodeCredentialStore() -> OpenCodeCredentialStore? {
+        let fileManager = FileManager.default
+
+        for databaseURL in getOpenCodeDatabasePaths() {
+            guard fileManager.fileExists(atPath: databaseURL.path),
+                  fileManager.isReadableFile(atPath: databaseURL.path) else {
+                continue
+            }
+
+            var db: OpaquePointer?
+            let openStatus = sqlite3_open_v2(databaseURL.path, &db, SQLITE_OPEN_READONLY, nil)
+            guard openStatus == SQLITE_OK, let database = db else {
+                if let db {
+                    sqlite3_close(db)
+                }
+                logger.warning("OpenCode credential database could not be opened at \(databaseURL.path)")
+                continue
+            }
+            defer { sqlite3_close(database) }
+
+            // OpenCode writes to this database while running; tolerate brief
+            // write locks instead of returning partial results.
+            sqlite3_busy_timeout(database, 250)
+
+            let query = """
+            SELECT integration_id, value FROM credential
+            WHERE coalesce(active, 1) = 1
+            ORDER BY time_updated ASC
+            """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, query, -1, &statement, nil) == SQLITE_OK else {
+                logger.warning("OpenCode credential query could not be prepared")
+                continue
+            }
+            defer { sqlite3_finalize(statement) }
+
+            var credentials: [String: String] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let integrationID = sqliteColumnString(statement, index: 0),
+                      let value = sqliteColumnString(statement, index: 1) else {
+                    continue
+                }
+                credentials[integrationID] = value
+            }
+
+            if !credentials.isEmpty {
+                logger.info("Loaded \(credentials.count) credentials from OpenCode credential store")
+                return OpenCodeCredentialStore(databaseURL: databaseURL, credentials: credentials)
+            }
+        }
+
+        return nil
     }
 
     func getOpenCodeAPIKey() -> String? {
@@ -4951,7 +5104,7 @@ final class TokenManager: @unchecked Sendable {
         lines.append("  Effective Copilot Discovery: \(effectiveGitHubCopilotDiscoverySummary())")
 
         lines.append("")
-        lines.append("[Gemini CLI]")
+        lines.append("[Gemini / Antigravity]")
         let geminiAuth = readGeminiOAuthAuth()
         let geminiAuthPath = lastFoundGeminiOAuthPath?.path ?? "auth.json"
         if let geminiAuth = geminiAuth, let refresh = geminiAuth.refresh, !refresh.isEmpty {

@@ -177,6 +177,17 @@ struct DetailedUsage {
     let balanceGranted: Double?
     let balanceToppedUp: Double?
 
+    /// Label of the Mistral budget used as the primary quota ("Vibe Budget"
+    /// or "API Budget" when the account has no Vibe allowance).
+    let mistralPrimaryBudgetLabel: String?
+
+    /// Mistral API budget allocated for the current billing period. The Vibe
+    /// budget is primary, so its amounts live in `monthlyUsage`/`limit`; the
+    /// API budget is secondary and its consumed percentage is stored in
+    /// `secondaryUsage`. The amount lives here so the menu can show money
+    /// instead of a rounded percentage.
+    let mistralAPIBudgetLimit: Double?
+
     /// Currency symbol for `balanceCurrency` (e.g. "USD" -> "$", "CNY" -> "¥").
     /// Falls back to the raw code with a trailing space for unknown currencies.
     var balanceCurrencySymbol: String {
@@ -364,7 +375,9 @@ struct DetailedUsage {
         copilotLimitRequests: Int? = nil,
         copilotQuotaResetDateUTC: Date? = nil,
         tokenExpiresAt: Date? = nil,
-        sessionVerifiedAt: Date? = nil
+        sessionVerifiedAt: Date? = nil,
+        mistralPrimaryBudgetLabel: String? = nil,
+        mistralAPIBudgetLimit: Double? = nil
     ) {
         self.dailyUsage = dailyUsage
         self.weeklyUsage = weeklyUsage
@@ -457,6 +470,8 @@ struct DetailedUsage {
         self.copilotQuotaResetDateUTC = copilotQuotaResetDateUTC
         self.tokenExpiresAt = tokenExpiresAt
         self.sessionVerifiedAt = sessionVerifiedAt
+        self.mistralPrimaryBudgetLabel = mistralPrimaryBudgetLabel
+        self.mistralAPIBudgetLimit = mistralAPIBudgetLimit
     }
 }
 
@@ -470,7 +485,7 @@ extension DetailedUsage: Codable {
         case codexPrimaryWindowLabel, codexPrimaryWindowHours, codexSecondaryWindowLabel, codexSecondaryWindowHours
         case sparkUsage, sparkReset, sparkSecondaryUsage, sparkSecondaryReset, sparkWindowLabel
         case sparkPrimaryWindowLabel, sparkPrimaryWindowHours, sparkSecondaryWindowLabel, sparkSecondaryWindowHours
-        case creditsBalance, planType, balanceCurrency, balanceGranted, balanceToppedUp
+        case creditsBalance, planType, balanceCurrency, balanceGranted, balanceToppedUp, mistralPrimaryBudgetLabel, mistralAPIBudgetLimit
         case chutesMonthlyValueCapUSD, chutesMonthlyValueUsedUSD, chutesMonthlyValueUsedPercent
         case openCodeGoMonthlyUsage, openCodeGoMonthlyReset, openCodeGoModelCount
         case extraUsageEnabled
@@ -532,6 +547,8 @@ extension DetailedUsage: Codable {
         balanceCurrency = try container.decodeIfPresent(String.self, forKey: .balanceCurrency)
         balanceGranted = try container.decodeIfPresent(Double.self, forKey: .balanceGranted)
         balanceToppedUp = try container.decodeIfPresent(Double.self, forKey: .balanceToppedUp)
+        mistralPrimaryBudgetLabel = try container.decodeIfPresent(String.self, forKey: .mistralPrimaryBudgetLabel)
+        mistralAPIBudgetLimit = try container.decodeIfPresent(Double.self, forKey: .mistralAPIBudgetLimit)
         chutesMonthlyValueCapUSD = try container.decodeIfPresent(Double.self, forKey: .chutesMonthlyValueCapUSD)
         chutesMonthlyValueUsedUSD = try container.decodeIfPresent(Double.self, forKey: .chutesMonthlyValueUsedUSD)
         chutesMonthlyValueUsedPercent = try container.decodeIfPresent(Double.self, forKey: .chutesMonthlyValueUsedPercent)
@@ -627,6 +644,8 @@ extension DetailedUsage: Codable {
         try container.encodeIfPresent(balanceCurrency, forKey: .balanceCurrency)
         try container.encodeIfPresent(balanceGranted, forKey: .balanceGranted)
         try container.encodeIfPresent(balanceToppedUp, forKey: .balanceToppedUp)
+        try container.encodeIfPresent(mistralPrimaryBudgetLabel, forKey: .mistralPrimaryBudgetLabel)
+        try container.encodeIfPresent(mistralAPIBudgetLimit, forKey: .mistralAPIBudgetLimit)
         try container.encodeIfPresent(chutesMonthlyValueCapUSD, forKey: .chutesMonthlyValueCapUSD)
         try container.encodeIfPresent(chutesMonthlyValueUsedUSD, forKey: .chutesMonthlyValueUsedUSD)
         try container.encodeIfPresent(chutesMonthlyValueUsedPercent, forKey: .chutesMonthlyValueUsedPercent)
@@ -839,23 +858,6 @@ struct JSONFormatter {
                 }
             }
 
-            if identifier == .geminiCLI, let accounts = result.details?.geminiAccounts, !accounts.isEmpty {
-                var accountsArray: [[String: Any]] = []
-                for account in accounts {
-                    var accountDict: [String: Any] = [:]
-                    accountDict["index"] = account.accountIndex
-                    accountDict["email"] = account.email
-                    if let accountId = account.accountId, !accountId.isEmpty {
-                        accountDict["accountId"] = accountId
-                    }
-                    accountDict["remainingPercentage"] = account.remainingPercentage
-                    accountDict["modelBreakdown"] = account.modelBreakdown
-                    accountDict["authSource"] = account.authSource
-                    accountsArray.append(accountDict)
-                }
-                providerDict["accounts"] = accountsArray
-            }
-
             if let accounts = result.accounts, accounts.count > 1 {
                 var accountsArray: [[String: Any]] = []
                 for account in accounts {
@@ -944,10 +946,6 @@ struct TableFormatter {
         }
     }
 
-    private static func geminiLabel(account: GeminiAccountQuota) -> String {
-        return "Gemini (#\(account.accountIndex + 1))"
-    }
-
     private static func shortenAuthSource(_ source: String) -> String {
         if source.hasPrefix("/") || source.hasPrefix("~") {
             return (source as NSString).lastPathComponent
@@ -961,19 +959,7 @@ struct TableFormatter {
         let minMetricsWidth = 30
         var maxWidth = minMetricsWidth
         for (identifier, result) in sortedResults {
-            if identifier == .geminiCLI,
-               let accounts = result.details?.geminiAccounts,
-               accounts.count > 1 {
-                for account in accounts {
-                    let metricsStr: String
-                    if let accountId = account.accountId, !accountId.isEmpty {
-                        metricsStr = "\(String(format: "%.0f", account.remainingPercentage))% remaining (\(account.email), id: \(accountId))"
-                    } else {
-                        metricsStr = "\(String(format: "%.0f", account.remainingPercentage))% remaining (\(account.email))"
-                    }
-                    maxWidth = max(maxWidth, metricsStr.count)
-                }
-            } else if let accounts = result.accounts, accounts.count > 1 {
+            if let accounts = result.accounts, accounts.count > 1 {
                 for account in accounts {
                     let metricsStr: String
                     switch account.usage {
@@ -1006,13 +992,7 @@ struct TableFormatter {
     ) -> Int {
         var maxWidth = minProviderWidth
         for (identifier, result) in sortedResults {
-            if identifier == .geminiCLI,
-               let accounts = result.details?.geminiAccounts,
-               accounts.count > 1 {
-                for account in accounts {
-                    maxWidth = max(maxWidth, geminiLabel(account: account).count)
-                }
-            } else if let accounts = result.accounts, accounts.count > 1 {
+            if let accounts = result.accounts, accounts.count > 1 {
                 for account in accounts {
                     maxWidth = max(maxWidth, accountLabel(identifier: identifier, account: account).count)
                 }
@@ -1040,14 +1020,7 @@ struct TableFormatter {
         output += "\n"
 
         for (identifier, result) in sortedResults {
-            if identifier == .geminiCLI,
-               let accounts = result.details?.geminiAccounts,
-               accounts.count > 1 {
-                for account in accounts {
-                    output += formatGeminiAccountRow(account: account, providerWidth: providerWidth)
-                    output += "\n"
-                }
-            } else if let accounts = result.accounts, accounts.count > 1 {
+            if let accounts = result.accounts, accounts.count > 1 {
                 for account in accounts {
                     output += formatAccountRow(identifier: identifier, account: account, providerWidth: providerWidth)
                     output += "\n"
@@ -1142,23 +1115,6 @@ struct TableFormatter {
                 return "-"
             }
         }
-    }
-
-    private static func formatGeminiAccountRow(account: GeminiAccountQuota, providerWidth: Int) -> String {
-        let label = geminiLabel(account: account)
-        let providerPadded = label.padding(toLength: providerWidth, withPad: " ", startingAt: 0)
-        let typePadded = "Quota-based".padding(toLength: typeWidth, withPad: " ", startingAt: 0)
-        let usageStr = UsagePercentDisplayFormatter.string(from: 100 - account.remainingPercentage)
-        let usagePadded = usageStr.padding(toLength: usageWidth, withPad: " ", startingAt: 0)
-
-        let metricsStr: String
-        if let accountId = account.accountId, !accountId.isEmpty {
-            metricsStr = "\(String(format: "%.0f", account.remainingPercentage))% remaining (\(account.email), id: \(accountId))"
-        } else {
-            metricsStr = "\(String(format: "%.0f", account.remainingPercentage))% remaining (\(account.email))"
-        }
-
-        return "\(providerPadded)  \(typePadded)  \(usagePadded)  \(metricsStr)"
     }
 
     private static func formatAccountRow(identifier: ProviderIdentifier, account: ProviderAccountResult, providerWidth: Int) -> String {
@@ -1561,9 +1517,6 @@ enum ProviderDisplayPolicy {
         case .claude, .codex, .copilot, .grok:
             guard let accounts = result.accounts else { return false }
             return !accounts.isEmpty
-        case .geminiCLI:
-            guard let accounts = result.details?.geminiAccounts else { return false }
-            return !accounts.isEmpty
         default:
             return false
         }
@@ -1592,6 +1545,7 @@ extension DetailedUsage {
             || secondaryUsage != nil || secondaryReset != nil || primaryReset != nil
             || sparkUsage != nil || sparkReset != nil || sparkSecondaryUsage != nil || sparkSecondaryReset != nil || sparkWindowLabel != nil
             || creditsBalance != nil || planType != nil
+            || mistralAPIBudgetLimit != nil || mistralPrimaryBudgetLabel != nil
             || weeklyUsagePercent != nil || weeklyUsageReset != nil || weeklyUsageUsed != nil || weeklyUsageTotal != nil
             || chutesMonthlyValueCapUSD != nil || chutesMonthlyValueUsedUSD != nil || chutesMonthlyValueUsedPercent != nil
             || openCodeGoMonthlyUsage != nil || openCodeGoMonthlyReset != nil || openCodeGoModelCount != nil

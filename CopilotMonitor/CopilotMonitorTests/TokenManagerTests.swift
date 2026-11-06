@@ -214,6 +214,11 @@ final class TokenManagerTests: XCTestCase {
         try fileManager.createDirectory(at: authDirectory, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: tempDirectory) }
 
+        // This fixture exercises the legacy auth.json path only; the v2
+        // credential store would otherwise override it with real credentials.
+        TokenManager.shared.setOpenCodeCredentialStoreEnabledForTesting(false)
+        defer { TokenManager.shared.setOpenCodeCredentialStoreEnabledForTesting(true) }
+
         let originalXDGDataHome = ProcessInfo.processInfo.environment["XDG_DATA_HOME"]
         if let originalXDGDataHome {
             setenv("XDG_DATA_HOME", originalXDGDataHome, 1)

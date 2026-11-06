@@ -11,12 +11,10 @@
 		0EA5E7A5BCD47582D6C2175B /* TokenManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBF0C48368166F3AD0C79F92 /* TokenManager.swift */; };
 		A7B1C0042026101300000001 /* GlobAIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B1C0042026101300000004 /* GlobAIProvider.swift */; };
 		A7B1C0042026101300000003 /* GlobAIProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B1C0042026101300000006 /* GlobAIProviderTests.swift */; };
-		23AA5FD37F2062EACCA79F50 /* GeminiCLIProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63B85E0F2A8C591D7E26AE2 /* GeminiCLIProviderTests.swift */; };
 		ANTIGRAVITYTESTBF11111 /* AntigravityProviderVarintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ANTIGRAVITYTESTFR11111 /* AntigravityProviderVarintTests.swift */; };
 		27A0B56ADAC5B75A3270F90D /* CopilotProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4AE672516E564CC52739BD9 /* CopilotProvider.swift */; };
 		283348F92F313096004DADE1 /* ProviderResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = PR2222222222222222222222 /* ProviderResult.swift */; };
 		283348FA2F313096004DADE1 /* UsageHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = E44444444444444444444444 /* UsageHistory.swift */; };
-		283348FB2F313096004DADE1 /* GeminiCLIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06EC3B683EB6892E4F9C8316 /* GeminiCLIProvider.swift */; };
 		283348FC2F313096004DADE1 /* ProviderProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE39D5663A7ABADC7E54B91D /* ProviderProtocol.swift */; };
 		283348FD2F313096004DADE1 /* ProviderUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4158558E58B121A9D13C48C3 /* ProviderUsage.swift */; };
 		283348FE2F313096004DADE1 /* TokenManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBF0C48368166F3AD0C79F92 /* TokenManager.swift */; };
@@ -37,6 +35,7 @@
 		A454D8C22F30544900E355E3 /* MenuBarExtraAccess in Frameworks */ = {isa = PBXBuildFile; productRef = MBA2222222222222222222222 /* MenuBarExtraAccess */; };
 		A454D8C42F30548900E355E3 /* ZaiCodingPlanProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A454D8C32F30548900E355E3 /* ZaiCodingPlanProvider.swift */; };
 		DE5E1B4A2C3D4E5F6A7B8C9DF /* DeepSeekProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE5E1B4A2C3D4E5F6A7B8C9DE /* DeepSeekProvider.swift */; };
+		MISTRALAPP11111111111111 /* MistralProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = MISTRALFILE222222222222 /* MistralProvider.swift */; };
 		MINIMAXAPP11111111111111 /* MiniMaxProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = MINIMAXFILE2222222222222 /* MiniMaxProvider.swift */; };
 		OCGOAPP11111111111111 /* OpenCodeGoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = OCGOFILE2222222222222 /* OpenCodeGoProvider.swift */; };
 		GROKAPP11111111111111 /* GrokProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = GROKFILE2222222222222 /* GrokProvider.swift */; };
@@ -70,6 +69,7 @@
 		KIROCLI11111111111111 /* KiroProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = KIROFILE2222222222222 /* KiroProvider.swift */; };
 		CLIZAI11111111111111111 /* ZaiCodingPlanProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A454D8C32F30548900E355E3 /* ZaiCodingPlanProvider.swift */; };
 		CLIDEEPSEEK11111111111 /* DeepSeekProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE5E1B4A2C3D4E5F6A7B8C9DE /* DeepSeekProvider.swift */; };
+		CLIMISTRAL11111111111111 /* MistralProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = MISTRALFILE222222222222 /* MistralProvider.swift */; };
 		NANOGPTCLI11111111111111 /* NanoGptProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = NANOGPTFILE222222222222 /* NanoGptProvider.swift */; };
 		CLIOPENCZEN1111111111111 /* OpenCodeZenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = OZ2222222222222222222222 /* OpenCodeZenProvider.swift */; };
 		CLIOPENROUTER111111111 /* OpenRouterProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = OR2222222222222222222222 /* OpenRouterProvider.swift */; };
@@ -82,7 +82,6 @@
 		E92DAE297D071D146591E201 /* MultiProviderStatusBarIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24BD2AE5B12FABC3E915AE27 /* MultiProviderStatusBarIconView.swift */; };
 		F08C918116D7B3024B68C81A /* MenuDesignToken.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1C7C9FDB4600114F02B2915 /* MenuDesignToken.swift */; };
 		F11111111111111111111111 /* UsagePredictor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22222222222222222222222 /* UsagePredictor.swift */; };
-		F35960B456C28D71BE7575A5 /* GeminiCLIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06EC3B683EB6892E4F9C8316 /* GeminiCLIProvider.swift */; };
 		KI1111111111111111111111 /* KimiProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = KI2222222222222222222222 /* KimiProvider.swift */; };
 		MINIMAXTESTBF11111111111 /* MiniMaxProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MINIMAXTESTFR11111111111 /* MiniMaxProviderTests.swift */; };
 		OCGOTESTBF11111111111 /* OpenCodeGoProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OCGOTESTFR11111111111 /* OpenCodeGoProviderTests.swift */; };
@@ -96,6 +95,7 @@
 		NANOGPTTESTBF1111111111 /* NanoGptProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = NANOGPTTESTFR1111111111 /* NanoGptProviderTests.swift */; };
 		CLIFMTTESTBF1111111111 /* CLIFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CLIFMTTESTFR1111111111 /* CLIFormatterTests.swift */; };
 		DEEPSKIPTESTBF1111111 /* DeepSeekProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEEPSKIPTESTFR1111111 /* DeepSeekProviderTests.swift */; };
+		MISTRALTSTBF11111111111 /* MistralProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = MISTRALTSTFR11111111111 /* MistralProviderTests.swift */; };
 		TOKENTESTBF1111111111111 /* TokenManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = TOKENTESTFR1111111111111 /* TokenManagerTests.swift */; };
 		CODEXTESTBF111111111111 /* CodexProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CODEXTESTFR111111111111 /* CodexProviderTests.swift */; };
 		OCAUTHTESTBF11111111111 /* OpenCodeAuthDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = OCAUTHTESTFR11111111111 /* OpenCodeAuthDecodingTests.swift */; };
@@ -165,7 +165,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		06EC3B683EB6892E4F9C8316 /* GeminiCLIProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiCLIProvider.swift; sourceTree = "<group>"; };
 		0F6CE62C58ECA852F25FEF30 /* MenuResultBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuResultBuilder.swift; sourceTree = "<group>"; };
 		18F40F1AC76A49A9B9DF74B0 /* ProviderManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProviderManager.swift; sourceTree = "<group>"; };
 		24BD2AE5B12FABC3E915AE27 /* MultiProviderStatusBarIconView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MultiProviderStatusBarIconView.swift; sourceTree = "<group>"; };
@@ -185,6 +184,7 @@
 		A44444444444444444444444 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A454D8C32F30548900E355E3 /* ZaiCodingPlanProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZaiCodingPlanProvider.swift; sourceTree = "<group>"; };
 		DE5E1B4A2C3D4E5F6A7B8C9DE /* DeepSeekProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSeekProvider.swift; sourceTree = "<group>"; };
+		MISTRALFILE222222222222 /* MistralProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MistralProvider.swift; sourceTree = "<group>"; };
 		MINIMAXFILE2222222222222 /* MiniMaxProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMaxProvider.swift; sourceTree = "<group>"; };
 		OCGOFILE2222222222222 /* OpenCodeGoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeGoProvider.swift; sourceTree = "<group>"; };
 		GROKFILE2222222222222 /* GrokProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokProvider.swift; sourceTree = "<group>"; };
@@ -196,7 +196,6 @@
 		A99999999999999999999999 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AD0CA52627AF05BD67B56E /* StatusBarIconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarIconView.swift; sourceTree = "<group>"; };
 		AM2222222222222222222222 /* AppMigrationHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMigrationHelper.swift; sourceTree = "<group>"; };
-		B63B85E0F2A8C591D7E26AE2 /* GeminiCLIProviderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiCLIProviderTests.swift; sourceTree = "<group>"; };
 		ANTIGRAVITYTESTFR11111 /* AntigravityProviderVarintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AntigravityProviderVarintTests.swift; sourceTree = "<group>"; };
 		BE39D5663A7ABADC7E54B91D /* ProviderProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProviderProtocol.swift; sourceTree = "<group>"; };
 		C1C7C9FDB4600114F02B2915 /* MenuDesignToken.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MenuDesignToken.swift; sourceTree = "<group>"; };
@@ -245,6 +244,7 @@
 		NANOGPTTESTFR1111111111 /* NanoGptProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NanoGptProviderTests.swift; sourceTree = "<group>"; };
 		CLIFMTTESTFR1111111111 /* CLIFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIFormatterTests.swift; sourceTree = "<group>"; };
 		DEEPSKIPTESTFR1111111 /* DeepSeekProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSeekProviderTests.swift; sourceTree = "<group>"; };
+		MISTRALTSTFR11111111111 /* MistralProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MistralProviderTests.swift; sourceTree = "<group>"; };
 		TOKENTESTFR1111111111111 /* TokenManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenManagerTests.swift; sourceTree = "<group>"; };
 		CODEXTESTFR111111111111 /* CodexProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexProviderTests.swift; sourceTree = "<group>"; };
 		OCAUTHTESTFR11111111111 /* OpenCodeAuthDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenCodeAuthDecodingTests.swift; sourceTree = "<group>"; };
@@ -303,8 +303,8 @@
 			children = (
 				A454D8C32F30548900E355E3 /* ZaiCodingPlanProvider.swift */,
 				DE5E1B4A2C3D4E5F6A7B8C9DE /* DeepSeekProvider.swift */,
+				MISTRALFILE222222222222 /* MistralProvider.swift */,
 				NANOGPTFILE222222222222 /* NanoGptProvider.swift */,
-				06EC3B683EB6892E4F9C8316 /* GeminiCLIProvider.swift */,
 				4DDC1B4DE6B5118CE4AE8F82 /* ClaudeProvider.swift */,
 				76783C44AA2329AE3FA7E981 /* CodexProvider.swift */,
 				CMDCODEFILE11111111111 /* CommandCodeProvider.swift */,
@@ -461,7 +461,6 @@
 			children = (
 				T22222222222222222222222 /* ProviderUsageTests.swift */,
 				TOOOOOOOOOOOOOOOOOOOOOOO /* Fixtures */,
-				B63B85E0F2A8C591D7E26AE2 /* GeminiCLIProviderTests.swift */,
 				ANTIGRAVITYTESTFR11111 /* AntigravityProviderVarintTests.swift */,
 				ED35D8BD06A436306085737D /* CopilotProviderTests.swift */,
 				OR3333333333333333333333 /* OpenRouterProviderTests.swift */,
@@ -473,6 +472,7 @@
 				NANOGPTTESTFR1111111111 /* NanoGptProviderTests.swift */,
 				CLIFMTTESTFR1111111111 /* CLIFormatterTests.swift */,
 				DEEPSKIPTESTFR1111111 /* DeepSeekProviderTests.swift */,
+				MISTRALTSTFR11111111111 /* MistralProviderTests.swift */,
 				MINIMAXTESTFR11111111111 /* MiniMaxProviderTests.swift */,
 				OCGOTESTFR11111111111 /* OpenCodeGoProviderTests.swift */,
 				GROKTESTFR11111111111 /* GrokProviderTests.swift */,
@@ -647,7 +647,6 @@
 			CLICODEX111111111111111 /* CodexProvider.swift in Sources */,
 			CMDCODECLI111111111111 /* CommandCodeProvider.swift in Sources */,
 			CLICURSOR1111111111111 /* CursorProvider.swift in Sources */,
-			F35960B456C28D71BE7575A5 /* GeminiCLIProvider.swift in Sources */,
 			CLIOPENROUTER111111111 /* OpenRouterProvider.swift in Sources */,
 			CLIANTIGRAVITY11111111 /* AntigravityProvider.swift in Sources */,
 			CLIOPENCZEN1111111111111 /* OpenCodeZenProvider.swift in Sources */,
@@ -658,6 +657,7 @@
 			KIROCLI11111111111111 /* KiroProvider.swift in Sources */,
 			CLIZAI11111111111111111 /* ZaiCodingPlanProvider.swift in Sources */,
 			CLIDEEPSEEK11111111111 /* DeepSeekProvider.swift in Sources */,
+			CLIMISTRAL11111111111111 /* MistralProvider.swift in Sources */,
 			NANOGPTCLI11111111111111 /* NanoGptProvider.swift in Sources */,
 			283349022F313176004DADE1 /* ChutesProvider.swift in Sources */,
 			CLITAVILY111111111111111 /* TavilySearchProvider.swift in Sources */,
@@ -679,6 +679,7 @@
 				AM1111111111111111111111 /* AppMigrationHelper.swift in Sources */,
 			A454D8C42F30548900E355E3 /* ZaiCodingPlanProvider.swift in Sources */,
 			DE5E1B4A2C3D4E5F6A7B8C9DF /* DeepSeekProvider.swift in Sources */,
+			MISTRALAPP11111111111111 /* MistralProvider.swift in Sources */,
 			NANOGPTAPP11111111111111 /* NanoGptProvider.swift in Sources */,
 			BCDE4599B74AF7A799CE1D /* StatusBarIconView.swift in Sources */,
 				ME1111111111111111111111 /* MenuEnums.swift in Sources */,
@@ -687,7 +688,6 @@
 				283348FA2F313096004DADE1 /* UsageHistory.swift in Sources */,
 				SS1111111111111111111111 /* SubscriptionSettings.swift in Sources */,
 				F11111111111111111111111 /* UsagePredictor.swift in Sources */,
-				283348FB2F313096004DADE1 /* GeminiCLIProvider.swift in Sources */,
 				283348FC2F313096004DADE1 /* ProviderProtocol.swift in Sources */,
 				283348FD2F313096004DADE1 /* ProviderUsage.swift in Sources */,
 				283348FE2F313096004DADE1 /* TokenManager.swift in Sources */,
@@ -728,7 +728,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				T11111111111111111111111 /* ProviderUsageTests.swift in Sources */,
-				23AA5FD37F2062EACCA79F50 /* GeminiCLIProviderTests.swift in Sources */,
 				ANTIGRAVITYTESTBF11111 /* AntigravityProviderVarintTests.swift in Sources */,
 				632E52F6050FAD5CAF928E36 /* CopilotProviderTests.swift in Sources */,
 				OR4444444444444444444444 /* OpenRouterProviderTests.swift in Sources */,
@@ -740,6 +739,7 @@
 			NANOGPTTESTBF1111111111 /* NanoGptProviderTests.swift in Sources */,
 			CLIFMTTESTBF1111111111 /* CLIFormatterTests.swift in Sources */,
 			DEEPSKIPTESTBF1111111 /* DeepSeekProviderTests.swift in Sources */,
+			MISTRALTSTBF11111111111 /* MistralProviderTests.swift in Sources */,
 			MINIMAXTESTBF11111111111 /* MiniMaxProviderTests.swift in Sources */,
 			OCGOTESTBF11111111111 /* OpenCodeGoProviderTests.swift in Sources */,
 			GROKTESTBF11111111111 /* GrokProviderTests.swift in Sources */,

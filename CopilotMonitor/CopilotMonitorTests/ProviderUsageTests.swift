@@ -91,34 +91,6 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertEqual(providerDict["sevenDayUsage"] as? Double, 45)
     }
 
-    func testJSONFormatterIncludesGeminiAccountAuthSource() throws {
-        let accounts = [
-            GeminiAccountQuota(
-                accountIndex: 0,
-                email: "user@example.com",
-                remainingPercentage: 85,
-                modelBreakdown: ["gemini-2.5-pro": 85],
-                authSource: "~/.config/opencode/antigravity-accounts.json",
-                earliestReset: nil,
-                modelResetTimes: [:]
-            )
-        ]
-        let details = DetailedUsage(geminiAccounts: accounts)
-        let usage = ProviderUsage.quotaBased(remaining: 85, entitlement: 100, overagePermitted: false)
-        let result = ProviderResult(usage: usage, details: details)
-
-        let json = try JSONFormatter.format([.geminiCLI: result])
-        let parsed = try parseJSONObject(json)
-        let providerDict = try XCTUnwrap(parsed[ProviderIdentifier.geminiCLI.rawValue] as? [String: Any])
-        let accountsJSON = try XCTUnwrap(providerDict["accounts"] as? [[String: Any]])
-        let firstAccount = try XCTUnwrap(accountsJSON.first)
-
-        XCTAssertEqual(
-            firstAccount["authSource"] as? String,
-            "~/.config/opencode/antigravity-accounts.json"
-        )
-    }
-
     func testChutesInferredMonthlySubscriptionCostUsesKnownPlanTiers() {
         XCTAssertEqual(ChutesProvider.inferredMonthlySubscriptionCost(planTier: "Base"), 3)
         XCTAssertEqual(ChutesProvider.inferredMonthlySubscriptionCost(planTier: "Plus"), 10)
@@ -280,45 +252,6 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertFalse(manager.getAllSubscriptionKeys().contains(invalidProviderKey))
     }
 
-    func testTableFormatterShowsGeminiPercentOnlyForGeminiAccounts() {
-        let geminiAccounts = [
-            GeminiAccountQuota(
-                accountIndex: 0,
-                email: "first@example.com",
-                remainingPercentage: 30,
-                modelBreakdown: ["gemini-2.5-pro": 30],
-                authSource: "~/.config/opencode/antigravity-accounts.json",
-                earliestReset: nil,
-                modelResetTimes: [:]
-            ),
-            GeminiAccountQuota(
-                accountIndex: 1,
-                email: "second@example.com",
-                remainingPercentage: 50,
-                modelBreakdown: ["gemini-2.5-pro": 50],
-                authSource: "~/.gemini/oauth_creds.json",
-                earliestReset: nil,
-                modelResetTimes: [:]
-            )
-        ]
-
-        let geminiDetails = DetailedUsage(geminiAccounts: geminiAccounts)
-        let geminiUsage = ProviderUsage.quotaBased(remaining: 30, entitlement: 100, overagePermitted: false)
-        let geminiResult = ProviderResult(usage: geminiUsage, details: geminiDetails)
-
-        let antigravityUsage = ProviderUsage.quotaBased(remaining: 40, entitlement: 100, overagePermitted: false)
-        let antigravityResult = ProviderResult(usage: antigravityUsage, details: nil)
-
-        let output = TableFormatter.format([
-            .geminiCLI: geminiResult,
-            .antigravity: antigravityResult
-        ])
-
-        XCTAssertTrue(output.contains("Gemini (#1)"))
-        XCTAssertTrue(output.contains("70%"))
-        XCTAssertFalse(output.contains("70%,60%"))
-    }
-
     func testProviderDisplayPolicyKeepsClaudeAccountRowsVisibleDuringRateLimitCooldown() {
         let result = ProviderResult(
             usage: .quotaBased(remaining: 20, entitlement: 100, overagePermitted: false),
@@ -390,23 +323,23 @@ final class ProviderUsageTests: XCTestCase {
             delayNanoseconds: 0,
             result: makeQuotaResult(remaining: 42)
         )
-        let geminiProvider = CountingStubProvider(
-            identifier: .geminiCLI,
+        let codexProvider = CountingStubProvider(
+            identifier: .codex,
             minimumFetchInterval: 0,
             delayNanoseconds: 0,
             result: makeQuotaResult(remaining: 30)
         )
-        let manager = ProviderManager(providers: [claudeProvider, geminiProvider])
+        let manager = ProviderManager(providers: [claudeProvider, codexProvider])
 
         let result = await manager.fetchAll(enabledProviderIdentifiers: [.claude])
         let claudeFetchCount = await claudeProvider.fetchCount()
-        let geminiFetchCount = await geminiProvider.fetchCount()
+        let codexFetchCount = await codexProvider.fetchCount()
 
         XCTAssertEqual(claudeFetchCount, 1)
-        XCTAssertEqual(geminiFetchCount, 0)
+        XCTAssertEqual(codexFetchCount, 0)
         XCTAssertNotNil(result.results[.claude])
-        XCTAssertNil(result.results[.geminiCLI])
-        XCTAssertNil(result.errors[.geminiCLI])
+        XCTAssertNil(result.results[.codex])
+        XCTAssertNil(result.errors[.codex])
     }
 
     func testProviderManagerDeduplicatesConcurrentFetches() async {

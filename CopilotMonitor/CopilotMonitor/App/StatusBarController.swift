@@ -1069,7 +1069,7 @@ final class StatusBarController: NSObject {
             add(details?.fiveHourUsage, priority: .hourly)
         case .tavilySearch, .braveSearch:
             add(details?.mcpUsagePercent, priority: .monthly)
-        case .antigravity, .geminiCLI, .openRouter, .openCode, .openCodeZen, .deepSeek:
+        case .antigravity, .openRouter, .openCode, .openCodeZen, .deepSeek, .mistral:
             break
         }
 
@@ -1115,15 +1115,6 @@ final class StatusBarController: NSObject {
                 allCandidates.append(contentsOf:
                     Self.usagePercentCandidates(identifier: identifier, usage: account.usage, details: account.details)
                 )
-            }
-        }
-
-        // Gemini CLI special case: add as fallback priority since these don't have window metadata
-        if identifier == .geminiCLI, let geminiAccounts = result.details?.geminiAccounts {
-            for account in geminiAccounts {
-                if let normalized = Self.normalizedUsagePercent(100.0 - account.remainingPercentage) {
-                    allCandidates.append(UsagePercentCandidate(percent: normalized, priority: .fallback))
-                }
             }
         }
 
@@ -1178,14 +1169,6 @@ final class StatusBarController: NSObject {
         if let accounts = result.accounts {
             for account in accounts {
                 appendMetrics(usage: account.usage, details: account.details)
-            }
-        }
-
-        if identifier == .geminiCLI, let geminiAccounts = result.details?.geminiAccounts {
-            for account in geminiAccounts {
-                if let percent = Self.normalizedUsagePercent(100.0 - account.remainingPercentage) {
-                    usedPercents.append(percent)
-                }
             }
         }
 
@@ -1534,29 +1517,6 @@ final class StatusBarController: NSObject {
 
         for (identifier, result) in providerResults {
             guard isProviderEnabled(identifier) else { continue }
-
-            if identifier == .geminiCLI,
-               let details = result.details,
-               let geminiAccounts = details.geminiAccounts,
-               !geminiAccounts.isEmpty {
-                for account in geminiAccounts {
-                    let subscriptionAccountId: String?
-                    let trimmedEmail = account.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                    if !trimmedEmail.isEmpty {
-                        subscriptionAccountId = trimmedEmail
-                    } else if let accountId = account.accountId, !accountId.isEmpty {
-                        subscriptionAccountId = accountId
-                    } else {
-                        subscriptionAccountId = nil
-                    }
-                    let key = SubscriptionSettingsManager.shared.subscriptionKey(
-                        for: .geminiCLI,
-                        accountId: subscriptionAccountId
-                    )
-                    keys.insert(key)
-                }
-                continue
-            }
 
             if let accounts = result.accounts, !accounts.isEmpty {
                 for account in accounts {
@@ -2057,7 +2017,8 @@ final class StatusBarController: NSObject {
             .nanoGpt,
             .antigravity,
             .chutes,
-            .synthetic
+            .synthetic,
+            .mistral
         ]
         for identifier in quotaOrder {
             guard isProviderEnabled(identifier) else { continue }
@@ -2242,6 +2203,13 @@ final class StatusBarController: NSObject {
                                 account.details?.mcpUsagePercent
                             ].compactMap { $0 }
                             usedPercents = percents.isEmpty ? [account.usage.usagePercentage] : percents
+                        } else if identifier == .mistral {
+                            // Primary budget (Vibe) first, API budget second.
+                            var percents = [account.usage.usagePercentage]
+                            if let apiPercent = account.details?.secondaryUsage {
+                                percents.append(apiPercent)
+                            }
+                            usedPercents = percents
                         } else {
                             usedPercents = [account.usage.usagePercentage]
                         }
@@ -2328,6 +2296,13 @@ final class StatusBarController: NSObject {
                             result.details?.mcpUsagePercent
                         ].compactMap { $0 }
                         usedPercents = percents.isEmpty ? [singlePercent] : percents
+                    } else if identifier == .mistral {
+                        // Primary budget (Vibe) first, API budget second.
+                        var percents = [singlePercent]
+                        if let apiPercent = result.details?.secondaryUsage {
+                            percents.append(apiPercent)
+                        }
+                        usedPercents = percents
                     } else {
                         usedPercents = [singlePercent]
                     }
@@ -2371,96 +2346,10 @@ final class StatusBarController: NSObject {
             }
         }
 
-        if isProviderEnabled(.geminiCLI) {
-            let geminiResult = providerResults[.geminiCLI]
-            let geminiError = lastProviderErrors[.geminiCLI]
-
-            if let geminiError,
-               shouldDisplayErrorStateEvenWithResult(geminiError, identifier: .geminiCLI, result: geminiResult) {
-                hasQuota = true
-                let item = createErrorMenuItem(identifier: .geminiCLI, errorMessage: geminiError)
-                if item.isEnabled {
-                    item.submenu = createErrorSubmenu(identifier: .geminiCLI, result: geminiResult, errorMessage: geminiError)
-                }
-                menu.insertItem(item, at: insertIndex)
-                insertIndex += 1
-            } else if let result = geminiResult,
-               let details = result.details,
-               let geminiAccounts = details.geminiAccounts,
-               !geminiAccounts.isEmpty {
-                let geminiAuthLabels = Set(
-                    geminiAccounts.map { account in
-                        authSourceLabel(for: account.authSource, provider: .geminiCLI) ?? "Unknown"
-                    }
-                )
-                let showGeminiAuthLabel = geminiAuthLabels.count > 1
-
-                for account in geminiAccounts {
-                    hasQuota = true
-                    let accountNumber = account.accountIndex + 1
-                    let usedPercent = Self.normalizedUsagePercent(100.0 - account.remainingPercentage) ?? 0.0
-                    // Gemini account rows should represent Gemini quota only.
-                    // Antigravity has its own provider row and should not be duplicated here.
-                    let usedPercents: [Double] = [usedPercent]
-
-                    let normalizedEmail = account.email.trimmingCharacters(in: .whitespacesAndNewlines)
-                    var displayName = "Gemini CLI"
-
-                    if !normalizedEmail.isEmpty, normalizedEmail.lowercased() != "unknown" {
-                        displayName = "Gemini CLI (\(normalizedEmail))"
-                    } else if geminiAccounts.count > 1, showGeminiAuthLabel {
-                        displayName = "Gemini CLI #\(accountNumber)"
-                        let sourceLabel = authSourceLabel(for: account.authSource, provider: .geminiCLI) ?? "Unknown"
-                        displayName += " (\(sourceLabel))"
-                    } else if geminiAccounts.count > 1 {
-                        displayName = "Gemini CLI #\(accountNumber)"
-                    }
-                    let item = createNativeQuotaMenuItem(
-                        name: displayName,
-                        usedPercents: usedPercents,
-                        icon: iconForProvider(.geminiCLI)
-                    )
-                    item.tag = 999
-
-                    item.submenu = createGeminiAccountSubmenu(account)
-
-                    menu.insertItem(item, at: insertIndex)
-                    insertIndex += 1
-                }
-            } else if let errorMessage = geminiError {
-                if shouldDisplayErrorMenuItem(errorMessage) {
-                    hasQuota = true
-                    let item = createErrorMenuItem(identifier: .geminiCLI, errorMessage: errorMessage)
-                    if item.isEnabled {
-                        item.submenu = createErrorSubmenu(identifier: .geminiCLI, result: nil, errorMessage: errorMessage)
-                    }
-                    let status = errorMenuStatus(for: errorMessage)
-                    if status.shouldDeferToBottom {
-                        deferredUnavailableItems.append(item)
-                        deferredUnavailableProviders.append(.geminiCLI)
-                        debugLog("updateMultiProviderMenu: deferred \(status.title) item for Gemini CLI")
-                    } else {
-                        menu.insertItem(item, at: insertIndex)
-                        insertIndex += 1
-                    }
-                } else {
-                    debugLog("updateMultiProviderMenu: hiding Gemini CLI row because credentials are unavailable")
-                }
-            } else if loadingProviders.contains(.geminiCLI) {
-                hasQuota = true
-                let item = NSMenuItem(title: "Gemini CLI (Loading...)", action: nil, keyEquivalent: "")
-                item.image = iconForProvider(.geminiCLI)
-                item.isEnabled = false
-                item.tag = 999
-                menu.insertItem(item, at: insertIndex)
-                insertIndex += 1
-            }
-        }
-
         if !deferredUnavailableItems.isEmpty {
             let deferredNames = deferredUnavailableProviders.map { $0.displayName }.joined(separator: ", ")
             debugLog(
-                "updateMultiProviderMenu: inserting \(deferredUnavailableItems.count) deferred unavailable item(s) after Gemini: [\(deferredNames)]"
+                "updateMultiProviderMenu: inserting \(deferredUnavailableItems.count) deferred unavailable item(s) after provider rows: [\(deferredNames)]"
             )
             for item in deferredUnavailableItems {
                 menu.insertItem(item, at: insertIndex)
@@ -2742,15 +2631,6 @@ final class StatusBarController: NSObject {
                         return "VS Code (apps.json)"
                     }
                     return "VS Code"
-                }
-            case .geminiCLI:
-                if lowercased.contains("antigravity") {
-                    return "Antigravity"
-                }
-                if lowercased.contains(".gemini/oauth_creds.json")
-                    || lowercased.contains("/.gemini/oauth_creds.json")
-                    || lowercased.contains("oauth_creds.json") {
-                    return "Gemini CLI"
                 }
             case .grok:
                 if lowercased.contains(".grok/auth.json") || lowercased.contains("/.grok/auth.json") {
@@ -3263,8 +3143,6 @@ final class StatusBarController: NSObject {
             image = NSImage(systemSymbolName: identifier.iconName, accessibilityDescription: identifier.displayName)
         case .cursor:
             image = NSImage(named: "CursorIcon")
-        case .geminiCLI:
-            image = NSImage(named: "GeminiIcon")
         case .openCode:
             image = NSImage(named: "OpencodeIcon")
         case .openRouter:
@@ -3297,15 +3175,15 @@ final class StatusBarController: NSObject {
             image = NSImage(named: "BraveSearchIcon")
         case .deepSeek:
             image = NSImage(systemSymbolName: identifier.iconName, accessibilityDescription: identifier.displayName)
+        case .mistral:
+            image = NSImage(systemSymbolName: identifier.iconName, accessibilityDescription: identifier.displayName)
         case .globAI:
             image = NSImage(systemSymbolName: identifier.iconName, accessibilityDescription: identifier.displayName)
         }
 
-         // Keep consistent icon sizing and make Gemini slightly larger.
+         // Keep provider icon sizing consistent.
          if let image = image {
-             let iconSize = identifier == .geminiCLI
-                 ? MenuDesignToken.Dimension.geminiIconSize
-                 : MenuDesignToken.Dimension.iconSize
+             let iconSize = MenuDesignToken.Dimension.iconSize
              image.size = NSSize(width: iconSize, height: iconSize)
          }
          return image
@@ -4419,7 +4297,6 @@ extension StatusBarController {
         let fiveHoursFromNow = now.addingTimeInterval(5 * 3600)
         let sevenDaysFromNow = now.addingTimeInterval(7 * 24 * 3600)
         let oneDayFromNow = now.addingTimeInterval(24 * 3600)
-        let twoDaysFromNow = now.addingTimeInterval(2 * 24 * 3600)
         
         providerResults = [
             // --- Pay-as-you-go ---
@@ -4541,46 +4418,6 @@ extension StatusBarController {
                     )
                 ]
             ),
-            .geminiCLI: ProviderResult(
-                usage: .quotaBased(remaining: 85, entitlement: 100, overagePermitted: false),
-                details: DetailedUsage(
-                    authSource: "OpenCode",
-                    geminiAccounts: [
-                        GeminiAccountQuota(
-                            accountIndex: 0,
-                            email: "user@gmail.com",
-                            accountId: "100663739661147150906",
-                            remainingPercentage: 100.0,
-                            modelBreakdown: [
-                                "gemini-2.5-pro": 100.0,
-                                "gemini-2.5-flash": 100.0
-                            ],
-                            authSource: "Gemini CLI",
-                            earliestReset: sevenDaysFromNow,
-                            modelResetTimes: [
-                                "gemini-2.5-pro": sevenDaysFromNow,
-                                "gemini-2.5-flash": sevenDaysFromNow
-                            ]
-                        ),
-                        GeminiAccountQuota(
-                            accountIndex: 1,
-                            email: "work@company.com",
-                            accountId: "109876543210987654321",
-                            remainingPercentage: 70.0,
-                            modelBreakdown: [
-                                "gemini-2.5-pro": 70.0,
-                                "gemini-2.5-flash": 85.0
-                            ],
-                            authSource: "Antigravity",
-                            earliestReset: twoDaysFromNow,
-                            modelResetTimes: [
-                                "gemini-2.5-pro": twoDaysFromNow,
-                                "gemini-2.5-flash": twoDaysFromNow
-                            ]
-                        )
-                    ]
-                )
-            )
         ]
         
         // Clear any loading states

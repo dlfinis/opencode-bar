@@ -4,7 +4,7 @@ import Foundation
 enum ProviderType {
     /// Pay-as-you-go model (e.g., OpenRouter, OpenCode)
     case payAsYouGo
-    /// Quota-based model with monthly reset (e.g., Copilot, Claude, Codex, Gemini CLI)
+    /// Quota-based model with monthly reset (e.g., Copilot, Claude, Codex)
     case quotaBased
 }
 
@@ -15,7 +15,6 @@ enum ProviderIdentifier: String, CaseIterable {
     case codex
     case commandCode = "command_code"
     case cursor
-    case geminiCLI = "gemini_cli"
     case openRouter = "openrouter"
     case openCode = "open_code"
     case antigravity
@@ -32,6 +31,7 @@ enum ProviderIdentifier: String, CaseIterable {
     case tavilySearch = "tavily_search"
     case braveSearch = "brave_search"
     case deepSeek = "deepseek"
+    case mistral = "mistral"
     case globAI = "glob_ai"
 
     var displayName: String {
@@ -46,8 +46,6 @@ enum ProviderIdentifier: String, CaseIterable {
             return "Command Code"
         case .cursor:
             return "Cursor"
-        case .geminiCLI:
-            return "Gemini CLI"
         case .openRouter:
             return "OpenRouter"
         case .openCode:
@@ -80,6 +78,8 @@ enum ProviderIdentifier: String, CaseIterable {
             return "Brave Search"
         case .deepSeek:
             return "DeepSeek"
+        case .mistral:
+            return "Mistral"
         case .globAI:
             return "Glob.AI"
         }
@@ -97,8 +97,6 @@ enum ProviderIdentifier: String, CaseIterable {
             return "Command"
         case .cursor:
             return "Cursor"
-        case .geminiCLI:
-            return "Gemini"
         case .openRouter:
             return "Router"
         case .openCode:
@@ -131,6 +129,8 @@ enum ProviderIdentifier: String, CaseIterable {
             return "Brave"
         case .deepSeek:
             return "DeepSeek"
+        case .mistral:
+            return "Mistral"
         case .globAI:
             return "Glob.AI"
         }
@@ -148,8 +148,6 @@ enum ProviderIdentifier: String, CaseIterable {
             return "command"
         case .cursor:
             return "CursorIcon"
-        case .geminiCLI:
-            return "g.circle"
         case .openRouter:
             return "network"
         case .openCode:
@@ -182,6 +180,8 @@ enum ProviderIdentifier: String, CaseIterable {
             return "BraveSearchIcon"
         case .deepSeek:
             return "network"
+        case .mistral:
+            return "wind"
         case .globAI:
             return "g.square.fill"
         }

@@ -136,8 +136,6 @@ final class MultiProviderStatusBarIconView: NSView {
             iconName = "command"
         case .cursor:
             iconName = "CursorIcon"
-        case .geminiCLI:
-            iconName = "GeminiIcon"
         case .copilot:
             iconName = "CopilotIcon"
         case .openRouter:
@@ -174,6 +172,8 @@ final class MultiProviderStatusBarIconView: NSView {
             iconName = "BraveSearchIcon"
         case .deepSeek:
             iconName = "dollarsign.circle"
+        case .mistral:
+            iconName = "wind"
         case .globAI:
             iconName = "g.square.fill"
         }

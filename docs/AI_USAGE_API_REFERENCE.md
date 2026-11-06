@@ -6,13 +6,54 @@
 
 | Provider | Token File |
 |----------|-----------|
-| Claude | `~/.config/opencode/opencode-anthropic-auth/accounts.json`, `~/.local/share/opencode/auth.json`, `~/.config/claude-code/auth.json`, macOS Keychain (`Claude Code-credentials`, `Claude Code`) |
-| Codex / ChatGPT | `~/.local/share/opencode/auth.json`, `~/.opencode/auth/openai.json`, `~/.opencode/openai-codex-accounts.json`, `~/.opencode/projects/*/openai-codex-accounts.json`, `~/.codex/auth.json`, `~/.codex-lb/` |
-| Copilot, Nano-GPT, MiniMax, OpenCode Go | `~/.local/share/opencode/auth.json` |
+| Claude | OpenCode v2 database and legacy `auth.json` (see below), `~/.config/opencode/opencode-anthropic-auth/accounts.json`, `~/.config/claude-code/auth.json`, macOS Keychain (`Claude Code-credentials`, `Claude Code`) |
+| Codex / ChatGPT | OpenCode v2 database and legacy `auth.json` (see below), `~/.opencode/auth/openai.json`, `~/.opencode/openai-codex-accounts.json`, `~/.opencode/projects/*/openai-codex-accounts.json`, `~/.codex/auth.json`, `~/.codex-lb/` |
+| Copilot, Nano-GPT, MiniMax, OpenCode Go, Mistral | OpenCode v2 database and legacy `auth.json` (see below) |
 | Antigravity (Gemini) | `~/.config/opencode/antigravity-accounts.json` |
 | Antigravity (Local cache) | `~/Library/Application Support/Antigravity/User/globalStorage/state.vscdb` |
 | Kiro | Authenticated `kiro-cli` session; OpenCode Bar does not read local Kiro token databases |
 | Grok | `~/.grok/auth.json`, `~/.grok/sessions/**/signals.json`, optional grok.com browser cookies |
+
+### OpenCode v2 and legacy stores
+
+OpenCode-managed credentials are resolved from each store in this order:
+
+**Current SQLite database (`opencode.db`):**
+```text
+$XDG_DATA_HOME/opencode/opencode.db (when XDG_DATA_HOME is set)
+~/.local/share/opencode/opencode.db
+~/Library/Application Support/opencode/opencode.db
+```
+
+**Legacy JSON store (`auth.json`):**
+```text
+$XDG_DATA_HOME/opencode/auth.json (when XDG_DATA_HOME is set)
+~/.local/share/opencode/auth.json
+~/Library/Application Support/opencode/auth.json
+```
+
+The v2 database takes precedence over `auth.json` for the same provider integration. `auth.json` is the legacy store and remains a fallback.
+
+OpenCode Bar opens `opencode.db` with `SQLITE_OPEN_READONLY` and queries only the `credential` table. The database can be several gigabytes, so it is never copied or fully scanned; the large history tables are not queried. Active rows use `coalesce(active, 1) = 1`.
+
+The `credential` table has these columns:
+```text
+id, integration_id, label, value, connector_id, method_id, active, time_created, time_updated
+```
+
+`value` is JSON, for example:
+```json
+{"type":"key","key":"..."}
+{"type":"oauth","access":"...","refresh":"...","expires":1234567890}
+```
+
+The credential lookup filters active rows:
+```sql
+SELECT integration_id, value
+FROM credential
+WHERE coalesce(active, 1) = 1
+ORDER BY time_updated ASC;
+```
 
 ---
 
@@ -381,19 +422,22 @@ Antigravity has **two independent quota systems**:
 
 | System | Source | Models | Reset |
 |--------|--------|--------|-------|
-| **Gemini CLI** | `cloudcode-pa.googleapis.com` | gemini-2.0/2.5-flash/pro | ~17 hours |
+| **Antigravity Accounts Fallback (Gemini OAuth)** | `https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels` | Gemini and Claude models | API-provided |
 | **Antigravity Local** | Local cache reverse parsing (`state.vscdb`) | Claude 4.6, Gemini 3, GPT-OSS | ~7 days |
 
-### 6a. Gemini CLI Quota
+### 6a. Antigravity Account Fallback (Gemini OAuth)
 
-**Token:** `~/.config/opencode/antigravity-accounts.json`
+The standalone Gemini CLI provider has been removed. This OAuth flow remains because Antigravity uses it when local cache data is unavailable.
+
+**Refresh token source:** `~/.config/opencode/antigravity-accounts.json`
 
 **Endpoint:** `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota`
 
 ```bash
 REFRESH=$(jq -r '.accounts[0].refreshToken' ~/.config/opencode/antigravity-accounts.json)
+PROJECT_ID="your-antigravity-project-id"
 
-# Use the public Google OAuth client credentials for CLI/installed apps
+# Use the public Google OAuth client credentials for native apps
 # See: https://developers.google.com/identity/protocols/oauth2/native-app
 ACCESS=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
   -d "client_id=$GEMINI_CLIENT_ID" \
@@ -401,20 +445,21 @@ ACCESS=$(curl -s -X POST "https://oauth2.googleapis.com/token" \
   -d "refresh_token=$REFRESH" \
   -d "grant_type=refresh_token" | jq -r '.access_token')
 
-curl -s -X POST "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota" \
+curl -s -X POST "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels" \
   -H "Authorization: Bearer $ACCESS" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d "{\"project\":\"$PROJECT_ID\"}"
 ```
 
 **Response:**
 ```json
 {
-  "buckets": [
-    { "modelId": "gemini-2.0-flash", "remainingFraction": 1, "resetTime": "2026-01-30T17:05:02Z" },
-    { "modelId": "gemini-2.5-flash", "remainingFraction": 1, "resetTime": "2026-01-30T17:05:02Z" },
-    { "modelId": "gemini-2.5-pro", "remainingFraction": 0.85, "resetTime": "2026-01-30T17:05:02Z" }
-  ]
+  "models": {
+    "gemini-3-pro": {
+      "quotaInfo": { "remainingFraction": 0.75, "resetTime": "2026-10-05T15:00:00Z" },
+      "displayName": "Gemini 3 Pro"
+    }
+  }
 }
 ```
 
@@ -465,6 +510,44 @@ bash scripts/query-antigravity-reversed.sh --no-keychain
   }
 }
 ```
+
+---
+
+## 10. Mistral
+
+**Endpoints:**
+- `GET https://api.mistral.ai/v1/billing/budget`
+- `GET https://api.mistral.ai/v1/billing/subscription`
+
+Both endpoints use the Mistral API key in the `x-api-key` header:
+
+OpenCode Bar reads the key from the v2 `opencode.db` credential store first and uses legacy `auth.json` as a fallback. See [OpenCode v2 and legacy stores](#opencode-v2-and-legacy-stores) for path priority and the read-only lookup details. For manual inspection, set `OPENCODE_DB` and `OPENCODE_AUTH_JSON` to the resolved paths:
+
+```bash
+# Current v2 store; value is a JSON credential object.
+API_KEY="$(sqlite3 "$OPENCODE_DB" \
+  "SELECT value FROM credential WHERE integration_id = 'mistral' AND coalesce(active, 1) = 1 ORDER BY time_updated DESC LIMIT 1;" \
+  | jq -r '.key // empty')"
+
+# Legacy auth.json fallback.
+if [[ -z "$API_KEY" ]]; then
+  API_KEY="$(jq -r '.mistral.key // empty' "$OPENCODE_AUTH_JSON")"
+fi
+
+curl -sS "https://api.mistral.ai/v1/billing/budget" \
+  -H "x-api-key: $API_KEY" \
+  -H "Accept: application/json"
+
+curl -sS "https://api.mistral.ai/v1/billing/subscription" \
+  -H "x-api-key: $API_KEY" \
+  -H "Accept: application/json"
+```
+
+The budget response contains `vibe_budget` and `api_budget` (either may be absent). Each budget includes `usage_percentage`, `initial_budget`, `currency`, `reset_at`, and `payg_enabled`. The subscription response includes `plan_name`, `payg_enabled`, `vibe_payg_enabled`, and `enterprise`. The Vibe budget is the primary quota because it covers the coding assistant, where usage actually accrues; the API budget is shown as the secondary window. When only one budget is present it becomes the primary.
+
+OpenCode Bar uses these billing endpoints and does not call the Admin API (`/v1/admin/usage`), which is restricted to Enterprise admin keys. The subscription lookup is best-effort; budget usage remains available if it fails.
+
+The bundled [`scripts/query-mistral.sh`](../scripts/query-mistral.sh) prints Vibe and API budget usage, amounts, currencies, and reset times.
 
 ---
 
@@ -606,8 +689,8 @@ Test scripts are located in the `scripts/` folder:
 | `query-opencode-go.sh` | OpenCode Go |
 | `query-kiro.sh` | Kiro |
 | `query-grok.sh` | Grok |
-| `query-gemini-cli.sh` | Antigravity - Gemini CLI quota |
-| `query-gemini-oauth-creds.sh` | Gemini CLI oauth_creds identity/token inspection |
+| `query-mistral.sh` | Mistral |
+| `query-gemini-oauth-creds.sh` | Gemini OAuth credential identity/token inspection |
 | `query-antigravity-local.sh` | Antigravity - Local quota (cache reverse parsing alias) |
 | `query-antigravity-reversed.sh` | Antigravity - Local quota (cache reverse parsing) |
 | `query-antigravity-server.sh` | Antigravity - Localhost language server quota (legacy/server-dependent) |

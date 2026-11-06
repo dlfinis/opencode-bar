@@ -140,7 +140,6 @@ struct SwiftUIProviderAlertView: View {
         case .codex: return "terminal"
         case .commandCode: return "command"
         case .cursor: return nil
-        case .geminiCLI: return "sparkles"
         case .copilot: return "airplane"
         case .openRouter: return "dollarsign.circle"
         case .openCode, .openCodeZen, .openCodeGo: return "chevron.left.forwardslash.chevron.right"
@@ -153,6 +152,7 @@ struct SwiftUIProviderAlertView: View {
         case .synthetic: return "diamond"
         case .chutes: return "c.circle"
         case .tavilySearch, .braveSearch, .minimaxCodingPlan, .deepSeek: return nil
+        case .mistral: return "wind"
         case .globAI: return "g.square.fill"
         }
     }

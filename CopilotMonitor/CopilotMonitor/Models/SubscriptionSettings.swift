@@ -120,14 +120,6 @@ struct ProviderSubscriptionPresets {
         SubscriptionPreset(name: "Teams", cost: 40)
     ]
 
-    static let geminiCLI: [SubscriptionPreset] = [
-        SubscriptionPreset(name: "Plus", cost: 4),
-        SubscriptionPreset(name: "Plus", cost: 8),
-        SubscriptionPreset(name: "Pro", cost: 20),
-        SubscriptionPreset(name: "Ultra", cost: 125),
-        SubscriptionPreset(name: "Ultra", cost: 250)
-    ]
-
     static let copilot: [SubscriptionPreset] = [
         SubscriptionPreset(name: "Pro", cost: 10),
         SubscriptionPreset(name: "Pro+", cost: 39),
@@ -196,6 +188,7 @@ struct ProviderSubscriptionPresets {
     static let tavilySearch: [SubscriptionPreset] = []
     static let braveSearch: [SubscriptionPreset] = []
     static let deepSeek: [SubscriptionPreset] = []
+    static let mistral: [SubscriptionPreset] = []
     static let globAI: [SubscriptionPreset] = []
 
     static func presets(for provider: ProviderIdentifier) -> [SubscriptionPreset] {
@@ -208,8 +201,6 @@ struct ProviderSubscriptionPresets {
             return commandCode
         case .cursor:
             return cursor
-        case .geminiCLI:
-            return geminiCLI
         case .copilot:
             return copilot
         case .kimi:
@@ -244,6 +235,8 @@ struct ProviderSubscriptionPresets {
             return chutes
         case .deepSeek:
             return deepSeek
+        case .mistral:
+            return mistral
         case .globAI:
             return globAI
         }
